@@ -1,0 +1,362 @@
+#!/usr/bin/env python
+#===============================================================================
+#===============================================================================
+# Converts mSecure data to STRIP-importable XML files.
+#
+# Requires both an mSecure XML backup (for the types) and an exported CSV file
+# (for the unencrypted data).
+# Produces one XML file per type in a sub-directory based on the name of the
+# CSV file.
+#
+# Requires a recent enough Python to support the "with" clause.
+#
+# Tested on Mac OSX.
+#
+# Original: 12/27/10
+#   Author: Steve Cooper
+#  License: public domain
+#===============================================================================
+#===============================================================================
+
+import os
+import sys
+import csv
+import xml.etree.ElementTree
+import xml.parsers.expat
+import copy
+
+#===============================================================================
+def main():
+#===============================================================================
+
+    # Check arguments
+    if len(sys.argv) != 3:
+        raise Abort('Usage: %s BACKUP_XML EXPORT_CSV' % os.path.basename(sys.argv[0]),
+                    'This tool requires both a backup XML file and an exported CSV file.')
+    backup_xml_path   = sys.argv[1]
+    exported_csv_path = sys.argv[2]
+
+    # Parse backup XML file to obtain mSecure types
+    print 'Reading types from "%s"' % backup_xml_path
+    templates = read_templates_from_backup_xml(backup_xml_path)
+
+    # Create a sample type and entry to force the order of the field types
+    sample_template, sample_row = generate_sample_template_and_data(templates)
+    templates['Samples'] = sample_template
+
+    # Read unencrypted data from the exported CSV file
+    print 'Reading data from "%s"' % exported_csv_path
+    rows_by_template = read_rows_by_template_from_exported_csv(exported_csv_path, templates)
+    rows_by_template.setdefault('Samples', []).append(sample_row)
+
+    # Base output path in input CSV file
+    base_file_name = os.path.splitext(exported_csv_path)[0]
+    output_dir = os.path.join(os.path.dirname(exported_csv_path), '%s-STRIP' % base_file_name)
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Write each type to its own output file since each type has its own field list.
+    template_names = rows_by_template.keys()
+    template_names.sort()
+    for template_name in template_names:
+        template = templates[template_name]
+        output_rows = rows_by_template[template_name]
+        template_file_label = template_name.replace(' ', '_')
+        output_file_path = os.path.join(output_dir, '%s.csv' % template_file_label)
+        print 'Writing "%s"...' % output_file_path
+        try:
+            f = open(output_file_path, 'wb')
+            with f:
+                writer = csv.DictWriter(f, template.names())
+                f.write('%s\r\n' % ','.join(template.names()))
+                writer.writerows(output_rows)
+        except (IOError, OSError), e:
+            raise Abort('Unable to open "%s" for output' % output_file_path, e)
+
+#===============================================================================
+# Field type classes
+#===============================================================================
+
+class Field(object):
+    def __init__(self, name, type, secure):
+        self.name   = name
+        self.type   = type
+        self.secure = secure
+    def __cmp__(self, other):
+        return cmp(self.name, other.name)
+
+class Text(Field):
+    def __init__(self, name):
+        Field.__init__(self, name, "text", False)
+    def sample_value(self):
+        return 'Sample Text for %s' % self.name
+
+class URL(Field):
+    def __init__(self, name):
+        Field.__init__(self, name, "url", False)
+    def sample_value(self):
+        return 'http://sample/url/for/%s' % self.name.replace(' ', '%20')
+
+class AlNum(Field):
+    def __init__(self, name):
+        Field.__init__(self, name, "alphanumeric", False)
+    def sample_value(self):
+        return 'Sample Alpha-Numeric data for %s' % self.name
+
+class Phone(Field):
+    def __init__(self, name):
+        Field.__init__(self, name, "phone", False)
+    def sample_value(self):
+        return '1-800-555-1212'
+
+class Email(Field):
+    def __init__(self, name):
+        Field.__init__(self, name, "email", False)
+    def sample_value(self):
+        return '<sample@fake.com>'
+
+class Number(Field):
+    def __init__(self, name):
+        Field.__init__(self, name, "number", False)
+    def sample_value(self):
+        return '111'
+
+class Login(Field):
+    def __init__(self, name):
+        Field.__init__(self, name, "login", False)
+    def sample_value(self):
+        return 'Sample Login for %s' % self.name
+
+class Password(Field):
+    def __init__(self, name):
+        Field.__init__(self, name, "text", True)
+    def sample_value(self):
+        return 'Sample Password for %s' % self.name
+
+# Maps mSecure type integer to Field subclasses
+field_type_classes = (
+    Text,
+    Text,
+    URL,
+    AlNum,
+    Phone,
+    Email,
+    Number,
+    Login,
+    Password,
+)
+
+#===============================================================================
+# Type template class
+#===============================================================================
+
+class Template(object):
+    common_fields = [Text('Category'), Text('Entry'), Text('Note')]
+    def __init__(self, name, fields = []):
+        self.name   = name
+        self.fields = copy.copy(Template.common_fields) + fields
+    def add_field(self, field):
+        self.fields.append(field)
+    def names(self):
+        return [field.name for field in self.fields]
+
+#===============================================================================
+class Abort(Exception):
+#===============================================================================
+    def __init__(self, *msgs):
+        self.msgs = msgs
+
+#===============================================================================
+# Utility functions
+#===============================================================================
+
+#-------------------------------------------------------------------------------
+def xml_iterate_key_value_pairs(element):
+#-------------------------------------------------------------------------------
+    last_key = None
+    for child in element:
+        if child.tag == 'key':
+            last_key = child.text
+        else:
+            if last_key:
+                yield (last_key, child)
+
+#-------------------------------------------------------------------------------
+def xml_find_key_value_pair(element, key_tag, value_tag = None, required = True):
+#-------------------------------------------------------------------------------
+    for key, child in xml_iterate_key_value_pairs(element):
+        if key == key_tag:
+            if value_tag and child.tag != value_tag:
+                raise Abort('Backup XML parse error',
+                            'Expected "%s" element after key "%s", found "%s"'
+                                % (value_tag, key_tag, child.tag))
+            return child
+    else:
+        if required:
+            raise Abort('Backup XML parse error',
+                        'Did not find required "%s" element under parent "%s"')
+
+#-------------------------------------------------------------------------------
+def xml_get_element_dictionary(element):
+#-------------------------------------------------------------------------------
+    class Dictionary(object):
+        def __init__(self, element, pairs):
+            self._dict = dict(pairs)
+        def __getattr__(self, name):
+            if name in self._dict:
+                value = self._dict[name]
+                if value.tag == 'string':
+                    return value.text
+                elif value.tag == 'integer':
+                    return int(value.text)
+                elif value.tag == 'array':
+                    return [xml_get_element_dictionary(field) for field in value.findall('dict')]
+                elif value.tag == 'false':
+                    return False
+                elif value.tag == 'true':
+                    return True
+                else:
+                    return value
+            raise Abort('"%s" key not found in "%s" element' % (name, element.tag))
+    return Dictionary(element, [(k, v) for k, v in xml_iterate_key_value_pairs(element)])
+
+#-------------------------------------------------------------------------------
+def xml_find_dictionary_array(element, key_tag):
+#-------------------------------------------------------------------------------
+    return getattr(xml_get_element_dictionary(element), key_tag)
+
+#-------------------------------------------------------------------------------
+def read_templates_from_backup_xml(backup_xml_path):
+#-------------------------------------------------------------------------------
+    try:
+        et = xml.etree.ElementTree.ElementTree()
+        f = open(backup_xml_path)
+        with f:
+            # Need to skip the <mBackupData> element at the top before parsing the xml.
+            f.readline()
+            dict_root = et.parse(f).find('dict')
+        template_dict = {}
+        types_array = xml_find_dictionary_array(dict_root, 'typesList')
+        for type_dict in types_array:
+            template = Template(type_dict.name)
+            for field in type_dict.fields:
+                template.add_field(field_type_classes[field.type](field.name))
+            template_dict[type_dict.name] = template
+        return template_dict
+    except (IOError, OSError, xml.parsers.expat.ExpatError), e:
+        raise Abort('Unable to read backup XML file "%s"' % backup_xml_path, e)
+
+#-------------------------------------------------------------------------------
+def read_rows_by_template_from_exported_csv(exported_csv_path, templates):
+#-------------------------------------------------------------------------------
+    rows_by_template = {}
+    try:
+        f = open(exported_csv_path)
+        with f:
+            # The first line is a header
+            f.readline()
+            line_number = 1
+            for input_row in csv.reader(f):
+                line_number += 1
+                template_name = input_row[0]
+                if template_name not in templates:
+                    raise Abort('Template "%s" not found' % template_name)
+                output_row = generate_output_row(templates[template_name], input_row)
+                rows_by_template.setdefault(template_name, []).append(output_row)
+    except (IOError, OSError), e:
+        raise Abort('Unable to open "%s" for input' % exported_csv_path, e)
+    return rows_by_template
+
+#-------------------------------------------------------------------------------
+def generate_output_row(template, input_row):
+#-------------------------------------------------------------------------------
+    row = {}
+    if len(input_row) != len(template.fields):
+        raise Abort(
+            "Input data fields don't seem to match the template.",
+            "There are %d data fields versus %d template fields."
+                % (len(input_row), len(template.fields)),
+            "This can happen when template fields were changed before exporting data.",
+            "Restoring from a backup and re-exporting can fix the problem."
+        )
+    for i in range(len(input_row)):
+        template_name = template.fields[i].name
+        value = input_row[i]
+        value = value.replace(chr(11), '\\n')
+        if value:
+            if value[0] == '"':
+                value = '"%s"' % value[1:-1].replace('"', '\\"')
+            else:
+                value = value.replace('"', '\\"')
+        row[template_name] = value
+    return row
+
+#-------------------------------------------------------------------------------
+def generate_sample_template_and_data(templates):
+#-------------------------------------------------------------------------------
+
+    '''Gather the unique fields across all templates, sort them by popularity
+    and order of discovery, and generate sample template and data.'''
+
+    class FieldWrapper(object):
+        ordinal = 0
+        def __init__(self, field):
+            FieldWrapper.ordinal += 1
+            self.field       = field
+            self.ordinal     = FieldWrapper.ordinal
+            self.num_entries = 1
+            self.templates   = set()
+
+    # Compile the list of unique fields across all templates.  Wrap in
+    # FieldWrapper objects to track usage information.
+    field_wrappers = []
+    common_names = [field.name for field in Template.common_fields]
+    for template in templates.values():
+        for field in template.fields:
+            if field.name not in common_names:
+                for field_wrapper in field_wrappers:
+                    if field_wrapper.field.name == field.name:
+                        field_wrapper.num_entries += 1
+                        field_wrapper.templates.add(template.name)
+                        break
+                else:
+                    field_wrappers.append(FieldWrapper(field))
+
+    # Sort fields by number of templates, number of entries, and ordinal.
+    def cmp_wrappers(wrapper1, wrapper2):
+        if len(wrapper1.templates) != len(wrapper2.templates):
+            return cmp(len(wrapper2.templates), len(wrapper1.templates))
+        if wrapper1.num_entries != wrapper2.num_entries:
+            return cmp(wrapper2.num_entries, wrapper1.num_entries)
+        return cmp(wrapper1.ordinal, wrapper2.ordinal)
+    field_wrappers.sort(cmp = cmp_wrappers)
+
+    # Generate sample template and sample data.
+    sample_template = Template('Sample Template')
+
+    sample_row = {}
+    sample_row['Category'] = 'Samples'
+    sample_row['Entry']    = 'mSecure Field Types'
+    sample_row['Note']     = '''\
+This entry should be imported into STRIP before importing other templates
+in order to start with a clean set of field types.'''
+    for field_wrapper in field_wrappers:
+        sample_template.fields.append(field_wrapper.field)
+        sample_row[field_wrapper.field.name] = field_wrapper.field.sample_value()
+    return sample_template, sample_row
+
+#===============================================================================
+# Script initialization
+#===============================================================================
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Abort, e:
+        for msg in e.msgs:
+            if msg:
+                if issubclass(msg.__class__, Exception):
+                    sys.stderr.write('EXCEPTION: %s: %s' % (msg.__class__.__name__, str(msg)))
+                else:
+                    sys.stderr.write('ERROR: %s\n' % str(msg))
+        sys.stderr.write('Abort!\n')
