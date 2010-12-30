@@ -49,29 +49,24 @@ def main():
     rows_by_template = read_rows_by_template_from_exported_csv(exported_csv_path, templates)
     rows_by_template.setdefault('Samples', []).append(sample_row)
 
-    # Base output path in input CSV file
+    # Write the output file.  Base its path on input CSV path.
+    # Write all rows using the sample template containing all field types.
     base_file_name = os.path.splitext(exported_csv_path)[0]
-    output_dir = os.path.join(os.path.dirname(exported_csv_path), '%s-STRIP' % base_file_name)
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
-    # Write each type to its own output file since each type has its own field list.
-    template_names = rows_by_template.keys()
-    template_names.sort()
-    for template_name in template_names:
-        template = templates[template_name]
-        output_rows = rows_by_template[template_name]
-        template_file_label = template_name.replace(' ', '_')
-        output_file_path = os.path.join(output_dir, '%s.csv' % template_file_label)
-        print 'Writing "%s"...' % output_file_path
-        try:
-            f = open(output_file_path, 'wb')
-            with f:
-                writer = csv.DictWriter(f, template.names())
-                f.write('%s\r\n' % ','.join(template.names()))
+    output_file_path = os.path.join(os.path.dirname(exported_csv_path),
+                                    '%s-STRIP.csv' % base_file_name)
+    print 'Writing "%s"...' % output_file_path
+    try:
+        f = open(output_file_path, 'wb')
+        with f:
+            writer = csv.DictWriter(f, sample_template.names())
+            f.write('%s\r\n' % ','.join(sample_template.names()))
+            template_names = rows_by_template.keys()
+            template_names.sort()
+            for template_name in template_names:
+                output_rows = rows_by_template[template_name]
                 writer.writerows(output_rows)
-        except (IOError, OSError), e:
-            raise Abort('Unable to open "%s" for output' % output_file_path, e)
+    except (IOError, OSError), e:
+        raise Abort('Unable to open "%s" for output' % output_file_path, e)
 
 #===============================================================================
 # Field type classes
