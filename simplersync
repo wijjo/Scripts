@@ -1,0 +1,410 @@
+#!/usr/bin/env python
+#===============================================================================
+#===============================================================================
+# simplersync - Simpler front end to rsync with canned sync operations
+#===============================================================================
+#===============================================================================
+
+import sys
+import os
+import optparse
+
+class Runtime:
+    (directory, program) = os.path.split(sys.argv[0])
+    config = os.path.expanduser('~/.{0}rc'.format(program))
+
+# Add the program directory to support installation of sclib in a subdirectory.
+if Runtime.directory not in sys.path:
+    sys.path.insert(0, Runtime.directory)
+from sclib import configmapper, console, listutil
+
+class Opt:
+    def __init__(self, letter, word, action, dest, help):
+        self.letter = letter
+        self.word   = word
+        self.action = action
+        self.dest   = dest
+        self.help   = help
+
+class Bool(Opt):
+    def __init__(self, letter, word, dest, help):
+        Opt.__init__(self, letter, word, 'store_true', dest, help)
+
+class CommandLine:
+    commands = ['dump', 'help', 'list', 'pull', 'push', 'setup']
+    options  = [
+        Bool('-k', '--keep'     , 'keep'   , "keep target files deleted from source (push/pull)"),
+        Bool('-n', '--dry-run'  , 'pretend', 'perform dry run only (push/pull)'),
+        Bool('-s', '--show-only', 'show'   , 'show rsync commands without executing (push/pull)'),
+        Bool('-v', '--verbose'  , 'verbose', 'display verbose messages'),
+    ]
+    USAGE = '''%prog [OPTIONS] COMMAND [COMMAND_OPTS] [COMMAND_ARGS]
+
+Commands, options and arguments:
+
+  pull [-k|-n|-s] [NAME ...]  pull from remote to local
+  push [-k|-n|-s] [NAME ...]  push from local to remote
+  list                        list sync configuration names
+  setup                       create new configuration file
+  dump                        display configuration dump
+  help                        display help'''
+
+class RsyncOptions:
+    leading  = []
+    trailing = [
+        '--verbose',
+        '--times',
+        '--links',
+        '--recursive',
+        '--cvs-exclude',
+        '--omit-dir-times',
+        '--modify-window=1',
+    ]
+    delete = ['--delete']
+
+# Entry tag names
+class Tags:
+    INCLUDE   = configmapper.Config.include_entry
+    REFERENCE = 'syncs'
+    INCLUDES  = 'includes'
+    EXCLUDES  = 'excludes'
+    LOCAL     = 'local'
+    REMOTE    = 'remote'
+    HOST      = 'host'
+    USER      = 'user'
+    PORT      = 'port'
+    lists     = [INCLUDES, EXCLUDES]
+    keywords  = [REFERENCE]
+    numbers   = [PORT]
+    required  = [LOCAL, REMOTE]
+
+class Template:
+    text = '''\
+# {program} configuration format:
+# - Multiple synchronization sections are allowed.
+# - A {remote} entry is an absolute remote path.
+# - A {local} entry is a relative or absolute local path.
+# - A {reference} entry invokes other named synchronization sections.
+# - A {include} entry incorporates settings from other sections.
+# - Top directory {excludes} entry must start with /, not */
+[sync1]
+{remote} = /path/to/remote/directory
+{local} = /path/to/local/directory
+#{host} = mysrv1
+#{user} = myuser
+#{port} = portnum
+#{includes} =
+#    /path/to/include1
+#    /path/to/include2
+#{excludes} =
+#    /path/to/exclude1
+#    /path/to/exclude2
+#{reference} = sync2 sync3
+#{include} = settings1 settings2
+'''.format(program   = Runtime.program,
+           remote    = Tags.REMOTE,
+           local     = Tags.LOCAL,
+           reference = Tags.REFERENCE,
+           include   = Tags.INCLUDE,
+           includes  = Tags.INCLUDES,
+           excludes  = Tags.EXCLUDES,
+           host      = Tags.HOST,
+           user      = Tags.USER,
+           port      = Tags.PORT)
+
+class Messages(object):
+    BAD_COMMAND    = 'Unknown command: {command}'
+    NO_COMMAND     = 'No command specified'
+    CONFIG_MISSING = 'Configuration "{config}" not found'.format(config = Runtime.config)
+    CONFIG_ERRORS  = '* Configuration "{config}" has {{nerrors}} error{{plural}} *'.format(
+                        config = Runtime.config)
+    PROMPT_SETUP   = 'Overwrite existing "{config}"'.format(config = Runtime.config)
+    SHOW_SETUP     = 'Creating new "{config}", please edit before using.'.format(
+                        config = Runtime.config)
+    REMOTE_MISSING = '{sname}: Remote directory must be set if local is set'
+    LOCAL_MISSING  = '{sname}: Local directory "{ldir}" does not exist'
+    RSYNC_ERROR    = 'rsync {rsopts}', 'Error code: {rserror}'
+    INTERRUPT      = 'Keyboard interrupt'
+    DRY_RUN        = 'Dry Run: {label}'
+    SYNCHRONIZING  = 'Synchronize: {label}'
+    SHOW_COMMAND   = 'Command: rsync {sopts}'
+    PROMPT_SYNC    = 'Sync: {label}', 'From: {source}', '  To: {target}'
+    SHOW_PATH      = 'PATH={path}'.format(path = os.environ['PATH'])
+
+#===============================================================================
+class Syncer(object):
+#===============================================================================
+
+    def __init__(self, show, keep, pretend, verbose):
+        self.show    = show
+        self.keep    = keep
+        self.pretend = pretend
+        self.verbose = verbose
+
+    def push(self, op):
+        if not Tags.LOCAL in op.a or not Tags.REMOTE in op.a:
+            return
+        os.chdir(os.path.dirname(op.get(Tags.LOCAL)))
+        src = '{local}{sep}'.format(local = op.get(Tags.LOCAL), sep = os.sep)
+        if op.has(Tags.HOST):
+            tgt = '{user}@{host}:{remote}'.format(user   = op.get(Tags.USER),
+                                                  host   = op.get(Tags.HOST),
+                                                  remote = op.get(Tags.REMOTE))
+        else:
+            tgt = op.get(Tags.REMOTE)
+        if not self.show:
+            self._rsync(src,
+                        tgt,
+                        op.get(Tags.PORT),
+                        op.get(Tags.INCLUDES),
+                        op.get(Tags.EXCLUDES),
+                        True,
+                        op.name)
+        if self.show or not self.pretend:
+            self._rsync(src,
+                        tgt,
+                        op.get(Tags.PORT),
+                        op.get(Tags.INCLUDES),
+                        op.get(Tags.EXCLUDES),
+                        False,
+                        op.name)
+
+    def pull(self, op):
+        if not Tags.LOCAL in op.a or not Tags.REMOTE in op.a:
+            return
+        os.chdir(os.path.dirname(op.get(Tags.LOCAL)))
+        if op.has(Tags.HOST):
+            src = '{user}@{host}:{remote}{sep}'.format(user   = op.get(Tags.USER),
+                                                       host   = op.get(Tags.HOST),
+                                                       remote = op.get(Tags.REMOTE),
+                                                       sep    = os.sep)
+        else:
+            src = op.get(Tags.REMOTE)
+        tgt = op.get(Tags.LOCAL)
+        if not self.show:
+            self._rsync(src,
+                        tgt,
+                        op.get(Tags.PORT),
+                        op.get(Tags.INCLUDES),
+                        op.get(Tags.EXCLUDES),
+                        True,
+                        op.name)
+        if self.show or not self.pretend:
+            self._rsync(src,
+                        tgt,
+                        op.get(Tags.PORT),
+                        op.get(Tags.INCLUDES),
+                        op.get(Tags.EXCLUDES),
+                        False,
+                        op.name)
+
+    def _rsync(self, source, target, port, includes, excludes, dryrun, label):
+        opts = RsyncOptions.leading + (['"{source}"'.format(source = source),
+                                        '"{target}"'.format(target = target)]
+                                        + RsyncOptions.trailing)
+        opts.extend(['--include="{include}"'.format(include = include) for include in includes])
+        opts.extend(['--exclude="{exclude}"'.format(exclude = exclude) for exclude in excludes])
+        if source.find('@') >= 0 or target.find('@') >= 0:
+            opts.append('-e "ssh -p {port}"'.format(port = port))
+        if not self.keep:
+            opts.extend(RsyncOptions.delete)
+        sopts = ' '.join(opts)
+        if self.show:
+            sys.stdout.write('rsync {sopts}\n'.format(sopts = sopts))
+        else:
+            if dryrun:
+                rsopts = '--dry-run {sopts}'.format(sopts = sopts)
+                console.header(Messages.DRY_RUN, label = label)
+            else:
+                if self.verbose:
+                    console.info('', Messages.SHOW_COMMAND, sopts = sopts)
+                rsopts = sopts
+                console.pause(Messages.PROMPT_SYNC, label = label, source = source, target = target)
+            if self.verbose:
+                console.info(Messages.SHOW_PATH)
+            if not dryrun:
+                console.header(Messages.SYNCHRONIZING, label = label)
+            f = os.popen('rsync {rsopts}'.format(rsopts = rsopts))
+            for line in f:
+                s = line.rstrip()
+                if not os.path.isdir(line.rstrip()):
+                    sys.stdout.write('{s}\n'.format(s = s))
+            rserror = f.close()
+            if rserror is not None:
+                console.abort(Messages.RSYNC_ERROR, rsopts = rsopts, rserror = rserror)
+            if self.verbose and dryrun and self.pretend:
+                console.info('', Messages.SHOW_COMMAND, sopts = sopts)
+
+#===============================================================================
+def iter_options(options):
+#===============================================================================
+
+    for option in CommandLine.options:
+        value = getattr(options, option.dest)
+        if value is not None:
+            yield (option, value)
+
+#===============================================================================
+def parse_command_line():
+#===============================================================================
+
+    parser = optparse.OptionParser()
+    parser.set_usage(CommandLine.USAGE)
+    for o in CommandLine.options:
+        parser.add_option(o.letter, o.word, action = o.action, dest = o.dest, help = o.help)
+    (options, args) = parser.parse_args()
+    if len(args) < 1:
+        console.error(Messages.NO_COMMAND)
+        command = 'help'
+    else:
+        command = args[0].lower()
+    if command != 'setup' and not os.path.isfile(Runtime.config):
+        console.warning(Messages.CONFIG_MISSING)
+        return ('setup', [], options)
+    if command == 'help':
+        print ''
+        parser.print_help()
+        print ''
+        sys.exit()
+    if options.verbose:
+        console.header('Command')
+        console.info('Command: {command}'.format(command = command),
+                     '  Names: {names}'.format(names = ' '.join(args[1:])),
+                    [' Option: {name}={value}'.format(name = o.dest, value = str(v))
+                            for o, v in iter_options(options)])
+    return (command, args[1:], options)
+
+#===============================================================================
+def validate_config(config):
+#===============================================================================
+
+    errors = []
+    for section in config.iter_sections(reference = Tags.REFERENCE):
+        if section.has(Tags.LOCAL):
+            if not section.has(Tags.REMOTE):
+                for error in listutil.flatten_strings(Messages.REMOTE_MISSING,
+                                                      sname = section.name):
+                    errors.append(error)
+            elif not os.path.exists(section.get(Tags.LOCAL)):
+                for error in listutil.flatten_strings(Messages.LOCAL_MISSING,
+                                                      sname = section.name,
+                                                      ldir = section.get(Tags.LOCAL)):
+                    errors.append(error)
+    nerrors = len(errors)
+    if nerrors > 0:
+        if nerrors > 1:
+            plural = 's'
+        else:
+            plural = ''
+        console.abort(Messages.CONFIG_ERRORS, errors, nerrors = nerrors, plural = plural)
+
+#===============================================================================
+def setup_config():
+#===============================================================================
+
+    if os.path.exists(Runtime.config):
+        console.pause(Messages.PROMPT_SETUP)
+    console.info(Messages.SHOW_SETUP)
+    open(Runtime.config, 'w').write(Template.text)
+
+#===============================================================================
+def execute_dump(config):
+#===============================================================================
+
+    for op in config.iter_sections(reference = Tags.REFERENCE):
+        print '\n[{name}]'.format(name = op.name)
+        for name in op.names():
+            value = op.get(name)
+            if type(value) is list:
+                if value:
+                    if name in Tags.keywords:
+                        print '{name} = {value} '.format(name = name, value = ' '.join(value))
+                    else:
+                        print '{name} = {value} '.format(name = name, value = ':'.join(value))
+            else:
+                l = [s for s in str(op.get(name)).strip().split('\n') if s]
+                if len(l) > 1:
+                    print '{name} ='.format(name)
+                    for s in l:
+                        print '    {s}'.format(s = s)
+                elif len(l) == 1:
+                    print '{name} = {value}'.format(name = name, value = l[0])
+
+#===============================================================================
+def execute_list(config):
+#===============================================================================
+
+    for op in config.iter_sections(reference = Tags.REFERENCE):
+        if op.has(Tags.REFERENCE) and op.get(Tags.REFERENCE):
+            print op.name
+    for op in config.iter_sections():
+        if op.has(Tags.LOCAL, Tags.REMOTE):
+            print op.name
+
+#===============================================================================
+def execute_push(config, syncer, syncnames):
+#===============================================================================
+
+    if syncnames:
+        for op in config.iter_sections(syncnames, reference = Tags.REFERENCE):
+            if op.has(Tags.LOCAL, Tags.REMOTE):
+                syncer.push(op)
+    else:
+        console.abort('No names specified for push operation')
+
+#===============================================================================
+def execute_pull(config, syncer, syncnames):
+#===============================================================================
+
+    if syncnames:
+        for op in config.iter_sections(syncnames, reference = Tags.REFERENCE):
+            syncer.pull(op)
+    else:
+        console.abort('No names specified for pull operation')
+
+#===============================================================================
+def execute_command(command, syncnames, options):
+#===============================================================================
+
+    if command == 'setup':
+        setup_config()
+        sys.exit()
+
+    savedir = os.getcwd()
+
+    config = configmapper.Config.load(Runtime.config,
+                                      required = Tags.required,
+                                      numbers  = Tags.numbers,
+                                      lists    = Tags.lists,
+                                      keywords = Tags.keywords)
+    validate_config(config)
+
+    syncer = Syncer(options.show, options.keep, options.pretend, options.verbose)
+
+    if command == 'push':
+        execute_push(config, syncer, syncnames)
+    elif command == 'pull':
+        execute_pull(config, syncer, syncnames)
+    elif command == 'list':
+        execute_list(config)
+    elif command == 'dump':
+        execute_dump(config)
+    else:
+        console.abort(Messages.BAD_COMMAND, command = command)
+
+    os.chdir(savedir)
+
+    if not options.show:
+        sys.stdout.write('\n')
+
+#===============================================================================
+if __name__ == '__main__':
+#===============================================================================
+
+    (command, args, options) = parse_command_line()
+    try:
+        execute_command(command, args, options)
+    except configmapper.ConfigException, e:
+        console.abort(str(e))
+    except KeyboardInterrupt:
+        console.abort(Messages.INTERRUPT)
