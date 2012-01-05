@@ -67,19 +67,6 @@ class Global:
     # Default styles that are written to the user configuration.
     default_colorizers = (
 
-        Colorizer('rscd',
-            Scanner('[0-9/:. ]+ DEBUG[0-9]? (.*)', 'DEBUG'),
-            Scanner(' \[DEBUG[0-9]?\] (.*)', 'DEBUG'),
-            Scanner('[0-9/:. ]+ INFO[0-9]? (.*)', 'INFO'),
-            Scanner(' \[INFO[0-9]?\] (.*)', 'INFO'),
-            Scanner('[0-9/:. ]+ WARN (.*)', 'WARNING'),
-            Scanner('[0-9/:. ]+ WARNING (.*)', 'WARNING'),
-            Scanner(' \[WARN\] (.*)', 'WARNING'),
-            Scanner(' \[WARNING\] (.*)', 'WARNING'),
-            Scanner('[0-9/:. ]+ ERROR (.*)', 'ERROR'),
-            Scanner(' \[ERROR\] (.*)', 'ERROR'),
-        ),
-
         Colorizer('java',
             Scanner('(\[INFO\])', 'INFO'),
             Scanner('(\[WARN\])', 'WARNING'),
@@ -130,20 +117,6 @@ class Global:
             Scanner('C[ ]+', 'ERROR'),
             Scanner('G[ ]+', 'SECTION'),
             Scanner('D[ ]+', 'WARNING'),
-        ),
-
-        Colorizer('appserver',
-            Scanner('(\[INFO\])', 'INFO'),
-            Scanner('(\[WARN\])', 'WARNING'),
-            Scanner('(\[ERROR\])', 'ERROR'),
-            Scanner('\[java\][ \t]*([a-zA-Z.]*Exception):', 'ERROR'),
-        ),
-
-        Colorizer('client',
-            Scanner('(\[INFO\])', 'INFO'),
-            Scanner('(\[WARN\])', 'WARNING'),
-            Scanner('(\[ERROR\])', 'ERROR'),
-            Scanner('\[java\][ \t]*([a-zA-Z.]*Exception):', 'ERROR'),
         ),
     )
 
