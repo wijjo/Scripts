@@ -1,0 +1,332 @@
+#!/usr/bin/env python
+################################################################################
+# Follow and colorize command output
+################################################################################
+
+import sys
+import os, os.path
+import re
+import subprocess
+import json
+
+#==============================================================================
+
+BLACK   = 0
+RED     = 1
+GREEN   = 2
+YELLOW  = 3
+BLUE    = 4
+MAGENTA = 5
+CYAN    = 6
+WHITE   = 7
+
+class Style(object):
+    def __init__(self, name, fg = None, bg = None, bold = False, hide = False, marker = None):
+        self.name   = name
+        self.fg     = fg
+        self.bg     = bg
+        self.bold   = bold
+        self.hide   = hide
+        self.marker = marker
+
+class Scanner(object):
+    def __init__(self, pattern, style):
+        self.matcher = re.compile(pattern)
+        self.style   = style
+        self.index   = None
+
+class Colorizer(object):
+    def __init__(self, names = [], *scanners):
+        if type(names) not in (list, tuple):
+            self.names = (names,)
+        else:
+            self.names = names
+        self.scanners = scanners
+        index = 0
+        for scanner in self.scanners:
+            index += 1
+            scanner.index = index
+
+class Global:
+
+    # Default styles that are written to the user configuration.
+    default_styles = dict(
+        DEFAULT = Style('Default', fg = WHITE),
+        ADMIN   = Style('Admin', fg = WHITE, bg = BLUE, bold = True),
+        DEBUG   = Style('Debug', fg = BLUE),
+        INFO    = Style('Info', fg = GREEN, bold = True),
+        ERROR   = Style('Error', fg = RED, bold = True, marker = 'ERROR'),
+        WARNING = Style('Warning', fg = YELLOW, bold = True),
+        SECTION = Style('Section', fg = MAGENTA, bold = True),
+        HEADING = Style('Heading', fg = CYAN, bold = True),
+        SUCCESS = Style('Success', fg = GREEN, bg = YELLOW, bold = True, marker = 'FAILURE'),
+        FAILURE = Style('Failure', fg = RED, bg = YELLOW, bold = True),
+        HIDE    = Style('Hide', hide = True)
+    )
+
+    # Default styles that are written to the user configuration.
+    default_colorizers = (
+
+        Colorizer('rscd',
+            Scanner('[0-9/:. ]+ DEBUG[0-9]? (.*)', 'DEBUG'),
+            Scanner(' \[DEBUG[0-9]?\] (.*)', 'DEBUG'),
+            Scanner('[0-9/:. ]+ INFO[0-9]? (.*)', 'INFO'),
+            Scanner(' \[INFO[0-9]?\] (.*)', 'INFO'),
+            Scanner('[0-9/:. ]+ WARN (.*)', 'WARNING'),
+            Scanner('[0-9/:. ]+ WARNING (.*)', 'WARNING'),
+            Scanner(' \[WARN\] (.*)', 'WARNING'),
+            Scanner(' \[WARNING\] (.*)', 'WARNING'),
+            Scanner('[0-9/:. ]+ ERROR (.*)', 'ERROR'),
+            Scanner(' \[ERROR\] (.*)', 'ERROR'),
+        ),
+
+        Colorizer('java',
+            Scanner('(\[INFO\])', 'INFO'),
+            Scanner('(\[WARN\])', 'WARNING'),
+            Scanner('(\[ERROR\])', 'ERROR'),
+            Scanner('\[java\][ \t]*([a-zA-Z.]*Exception):', 'ERROR'),
+        ),
+
+        Colorizer(('make', 'gmake'),
+            Scanner("^\+ ([A-Z][A-Z_0-9]*=.*|shift|case.*|'\['.*|)$", 'HIDE'),
+            Scanner("^\+ \[.*\]$", 'HIDE'),
+            Scanner('^[+] exec ', 'INFO'),
+            Scanner('[wW][aA][rR][nN][iI][nN][gG]:', 'WARNING'),
+            Scanner('[eE][rR][rR][oO][rR]:', 'ERROR'),
+            Scanner('[eE][rR][rR][oO][rR] *[0-9]+', 'ERROR'),
+            Scanner('[fF][aA][tT][aA][lL] [eE][rR][rR][oO][rR]', 'ERROR'),
+            Scanner('[eE][rR][rR][oO][rR] [cC][oO][dD][eE]', 'ERROR'),
+            Scanner('^\s+(ar|ld|rm) ', 'INFO'),
+            Scanner('^make(\[\d+\])?:', 'HEADING'),
+        ),
+
+        Colorizer('ant',
+            Scanner('(\[[^ ]*\])', 'INFO'),
+            Scanner('^[a-zA-Z0-9_\- ]+[^: ]*:', 'HEADING'),
+            Scanner('[wW][aA][rR][nN][iI][nN][gG]:', 'WARNING'),
+            Scanner('\[WARNING\]', 'WARNING'),
+            Scanner('^[ ]+\[javac\][ ]+[^ ]+[.]java:[0-9]+:', 'ERROR'),
+            Scanner('^[ ]+\[java\][ \ta-zA-Z0-9._]+Exception:', 'ERROR'),
+            Scanner('^[ ]+\[java\][ \t]+Caused by:', 'ERROR'),
+            Scanner('\[ERROR\]', 'ERROR'),
+            Scanner('^[ ]+\[exec\][ ]+[^ ]+[.](cpp|cxx|c|h|hpp|hxx|o|so|a):[0-9]+:', 'ERROR'),
+            Scanner('[eE][rR][rR][oO][rR]:', 'ERROR'),
+            Scanner('[eE][rR][rR][oO][rR] *[0-9]+', 'ERROR'),
+            Scanner('[fF][aA][tT][aA][lL] [eE][rR][rR][oO][rR]', 'ERROR'),
+            Scanner('[eE][rR][rR][oO][rR] [cC][oO][dD][eE]', 'ERROR'),
+            Scanner('returned [1-9][0-9]* exit', 'ERROR'),
+            Scanner('BUILD SUCCESSFUL', 'SUCCESS'),
+            Scanner('BUILD FAILED', 'FAILURE'),
+            Scanner(' (Errors: [1-9][0-9]*)', 'ERROR'),
+            Scanner(' (Failures: [1-9][0-9]*)', 'ERROR'),
+            Scanner(' Testsuite\:', 'SECTION'),
+        ),
+
+        Colorizer('svn',
+            Scanner('U[ ]+', 'INFO'),
+            Scanner('Updated to revision', 'INFO'),
+            Scanner('At revision', 'INFO'),
+            Scanner('A[ ]+', 'HEADING'),
+            Scanner('C[ ]+', 'ERROR'),
+            Scanner('G[ ]+', 'SECTION'),
+            Scanner('D[ ]+', 'WARNING'),
+        ),
+
+        Colorizer('appserver',
+            Scanner('(\[INFO\])', 'INFO'),
+            Scanner('(\[WARN\])', 'WARNING'),
+            Scanner('(\[ERROR\])', 'ERROR'),
+            Scanner('\[java\][ \t]*([a-zA-Z.]*Exception):', 'ERROR'),
+        ),
+
+        Colorizer('client',
+            Scanner('(\[INFO\])', 'INFO'),
+            Scanner('(\[WARN\])', 'WARNING'),
+            Scanner('(\[ERROR\])', 'ERROR'),
+            Scanner('\[java\][ \t]*([a-zA-Z.]*Exception):', 'ERROR'),
+        ),
+    )
+
+    # This gets read from the user configuration
+    colorizers = []
+    styles     = {}
+
+def _message(f, tag, *msgs):
+    '''Low level message display.'''
+    if tag:
+        stag = '%8s: ' % tag
+    else:
+        stag = ''
+    for msg in msgs:
+        if msg is not None:
+            # Handle exceptions
+            if issubclass(msg.__class__, Exception):
+                f.write('%s%s Exception: %s\n' % (stag, msg.__class__.__name__, str(msg)))
+            else:
+                # Handle multi-line strings
+                try:
+                    t = msg + ' '   # Throws exception if not string
+                    for msg2 in msg.split('\n'):
+                        f.write('%s%s\n' % (stag, msg2))
+                except TypeError:
+                    if hasattr(msg, '__iter__'):
+                        for msg2 in msg:
+                            f.write('%s   %s\n' % (stag, msg2))
+                    else:
+                        f.write('%s%s\n' % (stag, str(msg)))
+
+def warning(*msgs):
+    _message(sys.stdout, 'WARNING', *msgs)
+
+def get_colorizer(name):
+    if name:
+        for colorizer in Global.colorizers:
+            if name in colorizer.names:
+                return colorizer
+    return None
+
+class Tailer(object):
+
+    def __init__(self, options, *args):
+        self.options = options
+        self.args    = args
+        self.ftee    = None
+
+    def __enter__(self):
+        if not self.options.no_tee:
+            name = '%s.out' % os.path.basename(self.args[0])
+            try:
+                self.ftee = open(name, 'w')
+            except Exception, e:
+                warning('Failed to open tee file "%s"' % name, e)
+        return self
+
+    def __exit__(self, type, value, traceback):
+        if self.ftee:
+            self.ftee.close()
+
+    def tail(self):
+        if not self.args:
+            return
+        colorizer = get_colorizer(self.options.colorizer)
+        if not colorizer:
+            if self.options.colorizer:
+                warning('Colorizer "%s" is not supported.' % self.options.colorizer)
+            colorizer = get_colorizer(self.args[0])
+            if colorizer is None:
+                colorizer = Colorizer()
+        try:
+            proc = subprocess.Popen(self.args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            for line in iter(proc.stdout.readline, ''):
+                s = line.rstrip()
+                for scanner in colorizer.scanners:
+                    if scanner.matcher.search(s):
+                        if options.verbose:
+                            print('<match index=%d pattern="%s">'
+                                        % (scanner.index, scanner.matcher.pattern))
+                        if scanner.style in Global.styles:
+                            style = Global.styles[scanner.style]
+                        else:
+                            warning('Style "%s" not found.' % scanner.style)
+                            continue
+                        if not style.hide:
+                            ansi_line(sys.stdout, style, s)
+                            if self.ftee:
+                                if style.marker:
+                                    self.ftee.write('%s: ' % style.marker)
+                                self.ftee.write(line)
+                                self.ftee.flush()
+                        break
+                else:
+                    sys.stdout.write('%s\n' % s)
+                    if self.ftee:
+                        self.ftee.write(line)
+                        self.ftee.flush()
+            proc.stdout.close()
+        except Exception, e:
+            warning('Exception running command: %s' % ' '.join(self.args), e)
+
+def ansi_line(f, style, s):
+    a = []
+    if style.fg:
+        a.append('3%d' % style.fg)
+        if style.bg is None:
+            a.append('49')
+    if style.bg:
+        a.append('4%d' % style.bg)
+    if style.bold:
+        a.append('1')
+    f.write('\x1b[%sm' % ';'.join(a))
+    f.write(s)
+    if a:
+        f.write('\x1b[K\x1b[m')
+    f.write('\n')
+    f.flush()
+
+def write_config_as_needed(config_path):
+    #TODO error handling
+    if not os.path.exists(config_path):
+        print 'Saving initial configuration to "%s"...' % config_path
+        class Encoder(json.JSONEncoder):
+            def default(self, o):
+                if isinstance(o, Colorizer):
+                    return dict(names    = o.names,
+                                scanners = o.scanners)
+                elif isinstance(o, Scanner):
+                    return dict(pattern = o.matcher.pattern,
+                                style   = o.style)
+                elif isinstance(o, Style):
+                    return dict(name   = o.name,
+                                fg     = o.fg,
+                                bg     = o.bg,
+                                bold   = o.bold,
+                                hide   = o.hide,
+                                marker = o.marker)
+                raise TypeError('Class "%s" not supported by custom JSON encoder' % o.__class__.__name__)
+        data = dict(styles = Global.default_styles, colorizers = Global.default_colorizers)
+        s = json.dumps(data, cls = Encoder, indent = 4, sort_keys = True)
+        with open(config_path, 'w') as f:
+            f.write(s)
+
+def read_config(config_path, styles, colorizers):
+    #TODO error handling
+    with open(config_path) as f:
+        s = f.read()
+        doc = json.loads(s)
+        for name in doc['styles']:
+            jstyle = doc['styles'][name]
+            styles[name] = Style(jstyle['name'], fg     = jstyle['fg'],
+                                                 bg     = jstyle['bg'],
+                                                 bold   = jstyle['bold'],
+                                                 hide   = jstyle['hide'],
+                                                 marker = jstyle['marker'])
+        for jcolorizer in doc['colorizers']:
+            names = jcolorizer['names']
+            scanners = []
+            for jscanner in jcolorizer['scanners']:
+                scanners.append(Scanner(jscanner['pattern'], jscanner['style']))
+            colorizers.append(Colorizer(names, *scanners))
+
+def configure():
+    '''Initialize the user configuration file as needed from which the
+    colorizers get loaded.'''
+    config_path = os.path.expanduser('~/.%src' % os.path.basename(sys.argv[0]))
+    write_config_as_needed(config_path)
+    read_config(config_path, Global.styles, Global.colorizers)
+
+if __name__ == '__main__':
+    configure()
+    from optparse import OptionParser
+    option_parser = OptionParser(description = "Follow and colorize a command's output.")
+    option_parser.add_option('-c', '--colorizer', type='string', dest='colorizer',
+                             help='specify colorizer name')
+    option_parser.add_option('-n', '--no-tee', action='store_true', dest='no_tee',
+                             help='disable teeing to output file')
+    option_parser.add_option('-v', '--verbose', action='store_true', dest='verbose',
+                             help='display verbose output')
+    (options, args) = option_parser.parse_args()
+    try:
+        with Tailer(options, *args) as tailer:
+            tailer.tail()
+    except KeyboardInterrupt:
+        warning('Interrupted')
