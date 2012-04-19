@@ -56,6 +56,8 @@ class Global:
         DEBUG   = Style('Debug', fg = BLUE),
         INFO    = Style('Info', fg = GREEN, bold = True),
         ERROR   = Style('Error', fg = RED, bold = True, marker = 'ERROR'),
+        GOOD    = Style('Good', fg = MAGENTA, bold = True),
+        BAD     = Style('Bad', fg = RED, bold = True),
         WARNING = Style('Warning', fg = YELLOW, bold = True),
         SECTION = Style('Section', fg = MAGENTA, bold = True),
         HEADING = Style('Heading', fg = CYAN, bold = True),
@@ -88,7 +90,9 @@ class Global:
         ),
 
         Colorizer('ant',
-            Scanner('(\[[^ ]*\])', 'INFO'),
+            Scanner(' FAILED', 'BAD'),
+            Scanner(' PASSED', 'GOOD'),
+            Scanner('\[exec\] SUCCESS', 'SUCCESS'),
             Scanner('^[a-zA-Z0-9_\- ]+[^: ]*:', 'HEADING'),
             Scanner('[wW][aA][rR][nN][iI][nN][gG]:', 'WARNING'),
             Scanner('\[WARNING\]', 'WARNING'),
@@ -104,9 +108,10 @@ class Global:
             Scanner('returned [1-9][0-9]* exit', 'ERROR'),
             Scanner('BUILD SUCCESSFUL', 'SUCCESS'),
             Scanner('BUILD FAILED', 'FAILURE'),
-            Scanner(' (Errors: [1-9][0-9]*)', 'ERROR'),
-            Scanner(' (Failures: [1-9][0-9]*)', 'ERROR'),
+            Scanner(' (Errors:\s*[1-9][0-9]*)', 'ERROR'),
+            Scanner(' (Failures:\s*[1-9][0-9]*)', 'ERROR'),
             Scanner(' Testsuite\:', 'SECTION'),
+            Scanner('(\[[^ ]*\])', 'INFO'),
         ),
 
         Colorizer('svn',
@@ -150,6 +155,10 @@ def _message(f, tag, *msgs):
 
 def warning(*msgs):
     _message(sys.stdout, 'WARNING', *msgs)
+    
+def abort(*msgs):
+    _message(sys.stdout, 'FATAL', *msgs)
+    sys.exit(1)
 
 def get_colorizer(name):
     if name:
@@ -157,17 +166,39 @@ def get_colorizer(name):
             if name in colorizer.names:
                 return colorizer
     return None
+    
+class CommandReader(object):
+    def __init__(self, *args):
+        self.args = args
+        self.name = args[0]
+    def __iter__(self):
+        try:
+            proc = subprocess.Popen(self.args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            for line in iter(proc.stdout.readline, ''):
+                yield line.rstrip()
+            proc.stdout.close()
+        except Exception, e:
+            warning('Exception running command: %s' % ' '.join(self.args), e)
+
+class TestReader(object):
+    def __init__(self, name, text):
+        self.name = name
+        self.text = text
+    def __iter__(self):
+        for line in self.text.split('\n'):
+            yield line
 
 class Tailer(object):
 
-    def __init__(self, options, *args):
-        self.options = options
-        self.args    = args
-        self.ftee    = None
+    def __init__(self, options, reader, colorizer):
+        self.options   = options
+        self.reader    = reader
+        self.colorizer = colorizer
+        self.ftee      = None
 
     def __enter__(self):
         if not self.options.no_tee:
-            name = '%s.out' % os.path.basename(self.args[0])
+            name = '%s.out' % os.path.basename(self.reader.name)
             try:
                 self.ftee = open(name, 'w')
             except Exception, e:
@@ -177,47 +208,34 @@ class Tailer(object):
     def __exit__(self, type, value, traceback):
         if self.ftee:
             self.ftee.close()
-
+            
     def tail(self):
-        if not self.args:
-            return
-        colorizer = get_colorizer(self.options.colorizer)
-        if not colorizer:
-            if self.options.colorizer:
-                warning('Colorizer "%s" is not supported.' % self.options.colorizer)
-            colorizer = get_colorizer(self.args[0])
-            if colorizer is None:
-                colorizer = Colorizer()
-        try:
-            proc = subprocess.Popen(self.args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            for line in iter(proc.stdout.readline, ''):
-                s = line.rstrip()
-                for scanner in colorizer.scanners:
-                    if scanner.matcher.search(s):
-                        if options.verbose:
-                            print('<match index=%d pattern="%s">'
-                                        % (scanner.index, scanner.matcher.pattern))
-                        if scanner.style in Global.styles:
-                            style = Global.styles[scanner.style]
-                        else:
-                            warning('Style "%s" not found.' % scanner.style)
-                            continue
-                        if not style.hide:
-                            ansi_line(sys.stdout, style, s)
-                            if self.ftee:
-                                if style.marker:
-                                    self.ftee.write('%s: ' % style.marker)
-                                self.ftee.write(line)
-                                self.ftee.flush()
-                        break
-                else:
-                    sys.stdout.write('%s\n' % s)
-                    if self.ftee:
-                        self.ftee.write(line)
-                        self.ftee.flush()
-            proc.stdout.close()
-        except Exception, e:
-            warning('Exception running command: %s' % ' '.join(self.args), e)
+        for s in self.reader:
+            for scanner in self.colorizer.scanners:
+                if options.debug:
+                    print '???', scanner.index, scanner.matcher.pattern, scanner.matcher.search(s)
+                if scanner.matcher.search(s):
+                    if options.verbose:
+                        print('<match index=%d pattern="%s">'
+                                    % (scanner.index, scanner.matcher.pattern))
+                    if scanner.style in Global.styles:
+                        style = Global.styles[scanner.style]
+                    else:
+                        warning('Style "%s" not found.' % scanner.style)
+                        continue
+                    if not style.hide:
+                        ansi_line(sys.stdout, style, s)
+                        if self.ftee:
+                            if style.marker:
+                                self.ftee.write('%s: ' % style.marker)
+                            self.ftee.write('%s\n' % s)
+                            self.ftee.flush()
+                    break
+            else:
+                sys.stdout.write('%s\n' % s)
+                if self.ftee:
+                    self.ftee.write('%s\n' % s)
+                    self.ftee.flush()
 
 def ansi_line(f, style, s):
     a = []
@@ -236,10 +254,13 @@ def ansi_line(f, style, s):
     f.write('\n')
     f.flush()
 
-def write_config_as_needed(config_path):
+def write_config_as_needed(config_path, rcgen):
     #TODO error handling
-    if not os.path.exists(config_path):
-        print 'Saving initial configuration to "%s"...' % config_path
+    if rcgen or not os.path.exists(config_path):
+        if rcgen:
+            print 'Generating configuration file "%s"...' % config_path
+        else:
+            print 'Saving initial configuration file "%s"...' % config_path
         class Encoder(json.JSONEncoder):
             def default(self, o):
                 if isinstance(o, Colorizer):
@@ -280,15 +301,66 @@ def read_config(config_path, styles, colorizers):
                 scanners.append(Scanner(jscanner['pattern'], jscanner['style']))
             colorizers.append(Colorizer(names, *scanners))
 
-def configure():
+def configure(options):
     '''Initialize the user configuration file as needed from which the
     colorizers get loaded.'''
     config_path = os.path.expanduser('~/.%src' % os.path.basename(sys.argv[0]))
-    write_config_as_needed(config_path)
+    write_config_as_needed(config_path, options.rcgen)
     read_config(config_path, Global.styles, Global.colorizers)
 
+class Test(object):
+    def __init__(self, name, colorizer, text):
+        self.name = name
+        self.colorizer = colorizer
+        self.text = text
+
+test_data = [
+    Test('ant', 'ant', '''\
+compile:
+   [depend] Deleted 17 out of date files in 0 seconds
+   [delete] Deleting: src/whatever.h
+    [javac] src/build.xml:28: warning: 'includeantruntime' was not set
+    [javac] Compiling 13 source files to obj
+
+licensecheck:
+     [exec] SUCCESS. Found 0 license text errors, 0 files containing tabs or trailing whitespace.
+
+ccompile:
+     [exec]      [exec] make: Nothing to be done for `main'.
+     [exec]      [exec] c++  -Wall xxx.cpp
+     [exec]      [exec] clang: warning: argument unused during compilation: '-rdynamic'
+     [exec]      [exec] LoggingTest:
+     [exec]      [exec] 	TestManagerSetLevels: PASSED.
+     [exec]      [exec] 	TestLoggerUsesProxyLevels: FAILED.
+     [exec]      [exec] FAILED
+     [exec]      [exec] IndexKeyTest:
+     [exec]      [exec] 	Int64KeyTest: PASSED.
+     [exec]      [exec] PASSED
+     [exec]      [exec] ===============================================================================
+     [exec]      [exec] TESTING COMPLETE (PASSED: 1, FAILED: 1)
+     [exec]      [exec] *** FAILURE ***
+     [exec]      [exec] ===============================================================================
+     [exec] 
+     [exec] junit:
+     [exec]     [junit] Tests run:   4, Failures:   0, Errors:   0, Time elapsed: 5.66 sec
+     [exec]     [junit] Running org.voltdb.TestRestoreAgent
+     [exec]     [junit] Tests run:  21, Failures:   0, Errors:   0, Time elapsed: 34.01 sec
+     [exec]     [junit] Running org.voltdb.TestVoltDB
+     [exec]     [junit]     testConfigurationValidate failed an assertion.
+     [exec]     [junit]         org.voltdb.TestVoltDB(TestVoltDB.java:115)
+     [exec]     [junit] Tests run:   4, Failures:   1, Errors:   0, Time elapsed: 3.92 sec
+     [exec]     [junit] Test org.voltdb.TestVoltDB FAILED
+     [exec]     [junit] Running org.voltdb.jdbc.TestJDBCDriver
+     [exec]     [junit] Tests run:  17, Failures:   0, Errors:   0, Time elapsed: 3.32 sec
+     [exec] 
+     [exec] BUILD FAILED
+     [exec] /Users/scooper/workspace/voltdb/build.xml:1241: JUnit had failures
+     [exec] 
+     [exec] Total time: 50 minutes 39 seconds
+'''),
+]
+
 if __name__ == '__main__':
-    configure()
     from optparse import OptionParser
     option_parser = OptionParser(description = "Follow and colorize a command's output.")
     option_parser.add_option('-c', '--colorizer', type='string', dest='colorizer',
@@ -297,9 +369,34 @@ if __name__ == '__main__':
                              help='disable teeing to output file')
     option_parser.add_option('-v', '--verbose', action='store_true', dest='verbose',
                              help='display verbose output')
+    option_parser.add_option('-d', '--debug', action='store_true', dest='debug',
+                             help='display extra verbose output for debugging')
+    option_parser.add_option('-t', '--test', type='string', dest='test',
+                             help='execute test using TEST data')
+    option_parser.add_option('-r', '--rcgen', action='store_true', dest='rcgen',
+                             help='regenerate new configuration file')
     (options, args) = option_parser.parse_args()
+    configure(options)
     try:
-        with Tailer(options, *args) as tailer:
+        if options.test:
+            for test in test_data:
+                if test.name == options.test:
+                    break
+            else:
+                abort('Could not find test "%s"' % options.test,
+                      'Known tests: %s' % ' '.join([t.name for t in test_data]))
+            reader = TestReader(test.name, test.text)
+            options.colorizer = test.colorizer
+        else:
+            reader = CommandReader(*args)
+        colorizer = get_colorizer(options.colorizer)
+        if not colorizer:
+            if options.colorizer:
+                warning('Colorizer "%s" is not supported.' % options.colorizer)
+            colorizer = get_colorizer(args[0])
+            if colorizer is None:
+                colorizer = Colorizer()
+        with Tailer(options, reader, colorizer) as tailer:
             tailer.tail()
     except KeyboardInterrupt:
         warning('Interrupted')
