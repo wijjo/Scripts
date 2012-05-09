@@ -67,6 +67,7 @@ class Global:
     )
 
     # Default styles that are written to the user configuration.
+    # Not used from here after the configuration exists and is not being regenerated.
     default_colorizers = (
 
         Colorizer('java',
@@ -90,8 +91,10 @@ class Global:
         ),
 
         Colorizer('ant',
-            Scanner(' FAILED', 'BAD'),
-            Scanner(' PASSED', 'GOOD'),
+            Scanner('FAILED: [1-9]', 'BAD'),
+            Scanner('PASSED: [1-9]', 'GOOD'),
+            Scanner('[\]:] FAILED', 'BAD'),
+            Scanner('[\]:] PASSED', 'GOOD'),
             Scanner('\[exec\] SUCCESS', 'SUCCESS'),
             Scanner('^[a-zA-Z0-9_\- ]+[^: ]*:', 'HEADING'),
             Scanner('[wW][aA][rR][nN][iI][nN][gG]:', 'WARNING'),
@@ -108,10 +111,16 @@ class Global:
             Scanner('returned [1-9][0-9]* exit', 'ERROR'),
             Scanner('BUILD SUCCESSFUL', 'SUCCESS'),
             Scanner('BUILD FAILED', 'FAILURE'),
-            Scanner(' (Errors:\s*[1-9][0-9]*)', 'ERROR'),
-            Scanner(' (Failures:\s*[1-9][0-9]*)', 'ERROR'),
+            Scanner(' ((Errors|Failures):\s*[1-9][0-9]*)', 'BAD'),
+            Scanner(' ((Errors|Failures):\s*0)[^0-9]', 'GOOD'),
             Scanner(' Testsuite\:', 'SECTION'),
             Scanner('(\[[^ ]*\])', 'INFO'),
+        ),
+
+        Colorizer('log',
+            Scanner('WARN', 'WARNING'),
+            Scanner('ERROR', 'ERROR'),
+            Scanner('FATAL', 'BAD'),
         ),
 
         Colorizer('svn',
@@ -155,7 +164,7 @@ def _message(f, tag, *msgs):
 
 def warning(*msgs):
     _message(sys.stdout, 'WARNING', *msgs)
-    
+
 def abort(*msgs):
     _message(sys.stdout, 'FATAL', *msgs)
     sys.exit(1)
@@ -166,11 +175,14 @@ def get_colorizer(name):
             if name in colorizer.names:
                 return colorizer
     return None
-    
+
 class CommandReader(object):
     def __init__(self, *args):
         self.args = args
-        self.name = args[0]
+        if len(args) > 1 and not args[1].startswith('-'):
+            self.name = '_'.join(args[:2])
+        else:
+            self.name = args[0]
     def __iter__(self):
         try:
             proc = subprocess.Popen(self.args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -208,7 +220,7 @@ class Tailer(object):
     def __exit__(self, type, value, traceback):
         if self.ftee:
             self.ftee.close()
-            
+
     def tail(self):
         for s in self.reader:
             for scanner in self.colorizer.scanners:
@@ -340,7 +352,7 @@ ccompile:
      [exec]      [exec] TESTING COMPLETE (PASSED: 1, FAILED: 1)
      [exec]      [exec] *** FAILURE ***
      [exec]      [exec] ===============================================================================
-     [exec] 
+     [exec]
      [exec] junit:
      [exec]     [junit] Tests run:   4, Failures:   0, Errors:   0, Time elapsed: 5.66 sec
      [exec]     [junit] Running org.voltdb.TestRestoreAgent
@@ -352,10 +364,10 @@ ccompile:
      [exec]     [junit] Test org.voltdb.TestVoltDB FAILED
      [exec]     [junit] Running org.voltdb.jdbc.TestJDBCDriver
      [exec]     [junit] Tests run:  17, Failures:   0, Errors:   0, Time elapsed: 3.32 sec
-     [exec] 
+     [exec]
      [exec] BUILD FAILED
      [exec] /Users/scooper/workspace/voltdb/build.xml:1241: JUnit had failures
-     [exec] 
+     [exec]
      [exec] Total time: 50 minutes 39 seconds
 '''),
 ]
