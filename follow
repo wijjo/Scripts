@@ -66,77 +66,14 @@ class Global:
         HIDE    = Style('Hide', hide = True)
     )
 
-    # Default styles that are written to the user configuration.
-    # Not used from here after the configuration exists and is not being regenerated.
-    default_colorizers = (
-
-        Colorizer('java',
-            Scanner('(\[INFO\])', 'INFO'),
-            Scanner('(\[WARN\])', 'WARNING'),
-            Scanner('(\[ERROR\])', 'ERROR'),
-            Scanner('\[java\][ \t]*([a-zA-Z.]*Exception):', 'ERROR'),
-        ),
-
-        Colorizer(('make', 'gmake'),
-            Scanner("^\+ ([A-Z][A-Z_0-9]*=.*|shift|case.*|'\['.*|)$", 'HIDE'),
-            Scanner("^\+ \[.*\]$", 'HIDE'),
-            Scanner('^[+] exec ', 'INFO'),
-            Scanner('[wW][aA][rR][nN][iI][nN][gG]:', 'WARNING'),
-            Scanner('[eE][rR][rR][oO][rR]:', 'ERROR'),
-            Scanner('[eE][rR][rR][oO][rR] *[0-9]+', 'ERROR'),
-            Scanner('[fF][aA][tT][aA][lL] [eE][rR][rR][oO][rR]', 'ERROR'),
-            Scanner('[eE][rR][rR][oO][rR] [cC][oO][dD][eE]', 'ERROR'),
-            Scanner('^\s+(ar|ld|rm) ', 'INFO'),
-            Scanner('^make(\[\d+\])?:', 'HEADING'),
-        ),
-
-        Colorizer('ant',
-            Scanner('FAILED: [1-9]', 'BAD'),
-            Scanner('PASSED: [1-9]', 'GOOD'),
-            Scanner('[\]:] FAILED', 'BAD'),
-            Scanner('[\]:] PASSED', 'GOOD'),
-            Scanner('\[exec\] SUCCESS', 'SUCCESS'),
-            Scanner('^[a-zA-Z0-9_\- ]+[^: ]*:', 'HEADING'),
-            Scanner('[wW][aA][rR][nN][iI][nN][gG]:', 'WARNING'),
-            Scanner('\[WARNING\]', 'WARNING'),
-            Scanner('^[ ]+\[javac\][ ]+[^ ]+[.]java:[0-9]+:', 'ERROR'),
-            Scanner('^[ ]+\[java\][ \ta-zA-Z0-9._]+Exception:', 'ERROR'),
-            Scanner('^[ ]+\[java\][ \t]+Caused by:', 'ERROR'),
-            Scanner('\[ERROR\]', 'ERROR'),
-            Scanner('^[ ]+\[exec\][ ]+[^ ]+[.](cpp|cxx|c|h|hpp|hxx|o|so|a):[0-9]+:', 'ERROR'),
-            Scanner('[eE][rR][rR][oO][rR]:', 'ERROR'),
-            Scanner('[eE][rR][rR][oO][rR] *[0-9]+', 'ERROR'),
-            Scanner('[fF][aA][tT][aA][lL] [eE][rR][rR][oO][rR]', 'ERROR'),
-            Scanner('[eE][rR][rR][oO][rR] [cC][oO][dD][eE]', 'ERROR'),
-            Scanner('returned [1-9][0-9]* exit', 'ERROR'),
-            Scanner('BUILD SUCCESSFUL', 'SUCCESS'),
-            Scanner('BUILD FAILED', 'FAILURE'),
-            Scanner(' ((Errors|Failures):\s*[1-9][0-9]*)', 'BAD'),
-            Scanner(' ((Errors|Failures):\s*0)[^0-9]', 'GOOD'),
-            Scanner(' Testsuite\:', 'SECTION'),
-            Scanner('(\[[^ ]*\])', 'INFO'),
-        ),
-
-        Colorizer('log',
-            Scanner('WARN', 'WARNING'),
-            Scanner('ERROR', 'ERROR'),
-            Scanner('FATAL', 'BAD'),
-        ),
-
-        Colorizer('svn',
-            Scanner('U[ ]+', 'INFO'),
-            Scanner('Updated to revision', 'INFO'),
-            Scanner('At revision', 'INFO'),
-            Scanner('A[ ]+', 'HEADING'),
-            Scanner('C[ ]+', 'ERROR'),
-            Scanner('G[ ]+', 'SECTION'),
-            Scanner('D[ ]+', 'WARNING'),
-        ),
-    )
-
     # This gets read from the user configuration
     colorizers = []
     styles     = {}
+
+    # Filled in when we know
+    script_name = os.path.basename(sys.argv[0])
+    output_directory = ('.%s' % script_name)
+    config_path = os.path.expanduser('~/.%src' % script_name)
 
 def _message(f, tag, *msgs):
     '''Low level message display.'''
@@ -169,8 +106,9 @@ def abort(*msgs):
     _message(sys.stdout, 'FATAL', *msgs)
     sys.exit(1)
 
-def get_colorizer(name):
-    if name:
+def get_colorizer(program):
+    if program:
+        name = os.path.basename(program)
         for colorizer in Global.colorizers:
             if name in colorizer.names:
                 return colorizer
@@ -210,11 +148,12 @@ class Tailer(object):
 
     def __enter__(self):
         if not self.options.no_tee:
-            name = '%s.out' % os.path.basename(self.reader.name)
+            path = os.path.join(Global.output_directory,
+                                '%s.out' % os.path.basename(self.reader.name))
             try:
-                self.ftee = open(name, 'w')
+                self.ftee = open(path, 'w')
             except Exception, e:
-                warning('Failed to open tee file "%s"' % name, e)
+                warning('Failed to open tee file "%s"' % path, e)
         return self
 
     def __exit__(self, type, value, traceback):
@@ -266,37 +205,19 @@ def ansi_line(f, style, s):
     f.write('\n')
     f.flush()
 
-def write_config_as_needed(config_path, rcgen):
+def write_config_as_needed(rcgen):
     #TODO error handling
-    if rcgen or not os.path.exists(config_path):
+    if rcgen or not os.path.exists(Global.config_path):
         if rcgen:
-            print 'Generating configuration file "%s"...' % config_path
+            print 'Generating configuration file "%s"...' % Global.config_path
         else:
-            print 'Saving initial configuration file "%s"...' % config_path
-        class Encoder(json.JSONEncoder):
-            def default(self, o):
-                if isinstance(o, Colorizer):
-                    return dict(names    = o.names,
-                                scanners = o.scanners)
-                elif isinstance(o, Scanner):
-                    return dict(pattern = o.matcher.pattern,
-                                style   = o.style)
-                elif isinstance(o, Style):
-                    return dict(name   = o.name,
-                                fg     = o.fg,
-                                bg     = o.bg,
-                                bold   = o.bold,
-                                hide   = o.hide,
-                                marker = o.marker)
-                raise TypeError('Class "%s" not supported by custom JSON encoder' % o.__class__.__name__)
-        data = dict(styles = Global.default_styles, colorizers = Global.default_colorizers)
-        s = json.dumps(data, cls = Encoder, indent = 4, sort_keys = True)
-        with open(config_path, 'w') as f:
-            f.write(s)
+            print 'Saving initial configuration file "%s"...' % Global.config_path
+        with open(Global.config_path, 'w') as f:
+            f.write(default_configuration)
 
-def read_config(config_path, styles, colorizers):
+def read_config(styles, colorizers):
     #TODO error handling
-    with open(config_path) as f:
+    with open(Global.config_path) as f:
         s = f.read()
         doc = json.loads(s)
         for name in doc['styles']:
@@ -316,9 +237,13 @@ def read_config(config_path, styles, colorizers):
 def configure(options):
     '''Initialize the user configuration file as needed from which the
     colorizers get loaded.'''
-    config_path = os.path.expanduser('~/.%src' % os.path.basename(sys.argv[0]))
-    write_config_as_needed(config_path, options.rcgen)
-    read_config(config_path, Global.styles, Global.colorizers)
+    write_config_as_needed(options.rcgen)
+    read_config(Global.styles, Global.colorizers)
+    # Create the output directory as needed
+    # TODO error handling
+    if not options.no_tee and not os.path.exists(Global.output_directory):
+        print 'Creating output directory "%s"...' % Global.output_directory
+        os.mkdir(Global.output_directory)
 
 class Test(object):
     def __init__(self, name, colorizer, text):
@@ -372,13 +297,370 @@ ccompile:
 '''),
 ]
 
+#=========== Default configuration =============================================
+
+# Defined so that entire ~/.followrc can be copied into this string.
+
+default_configuration = '''\
+{
+    "colorizers": [
+        {
+            "names": [
+                "java"
+            ],
+            "scanners": [
+                {
+                    "pattern": "(\\[INFO\\])",
+                    "style": "INFO"
+                },
+                {
+                    "pattern": "(\\[WARN\\])",
+                    "style": "WARNING"
+                },
+                {
+                    "pattern": "(\\[ERROR\\])",
+                    "style": "ERROR"
+                },
+                {
+                    "pattern": "\\[java\\][ \t]*([a-zA-Z.]*Exception):",
+                    "style": "ERROR"
+                }
+            ]
+        },
+        {
+            "names": [
+                "make",
+                "gmake"
+            ],
+            "scanners": [
+                {
+                    "pattern": "^\\+ ([A-Z][A-Z_0-9]*=.*|shift|case.*|'\\['.*|)$",
+                    "style": "HIDE"
+                },
+                {
+                    "pattern": "^\\+ \\[.*\\]$",
+                    "style": "HIDE"
+                },
+                {
+                    "pattern": "^[+] exec ",
+                    "style": "INFO"
+                },
+                {
+                    "pattern": "[wW][aA][rR][nN][iI][nN][gG]:",
+                    "style": "WARNING"
+                },
+                {
+                    "pattern": "[eE][rR][rR][oO][rR]:",
+                    "style": "ERROR"
+                },
+                {
+                    "pattern": "[eE][rR][rR][oO][rR] *[0-9]+",
+                    "style": "ERROR"
+                },
+                {
+                    "pattern": "[fF][aA][tT][aA][lL] [eE][rR][rR][oO][rR]",
+                    "style": "ERROR"
+                },
+                {
+                    "pattern": "[eE][rR][rR][oO][rR] [cC][oO][dD][eE]",
+                    "style": "ERROR"
+                },
+                {
+                    "pattern": "^\\s+(ar|ld|rm) ",
+                    "style": "INFO"
+                },
+                {
+                    "pattern": "^make(\\[\\d+\\])?:",
+                    "style": "HEADING"
+                }
+            ]
+        },
+        {
+            "names": [
+                "ant"
+            ],
+            "scanners": [
+                {
+                    "pattern": "FAILED: [1-9]",
+                    "style": "BAD"
+                },
+                {
+                    "pattern": "PASSED: [1-9]",
+                    "style": "GOOD"
+                },
+                {
+                    "pattern": "[\\]:] FAILED",
+                    "style": "BAD"
+                },
+                {
+                    "pattern": "[\\]:] PASSED",
+                    "style": "GOOD"
+                },
+                {
+                    "pattern": "\\[exec\\] SUCCESS",
+                    "style": "SUCCESS"
+                },
+                {
+                    "pattern": "^[a-zA-Z0-9_\\- ]+[^: ]*:",
+                    "style": "HEADING"
+                },
+                {
+                    "pattern": "\\[junit\\]   Running ",
+                    "style": "HEADING"
+                },
+                {
+                    "pattern": "[wW][aA][rR][nN][iI][nN][gG]:",
+                    "style": "WARNING"
+                },
+                {
+                    "pattern": "\\[WARNING\\]",
+                    "style": "WARNING"
+                },
+                {
+                    "pattern": "^[ ]+\\[javac\\][ ]+[^ ]+[.]java:[0-9]+:",
+                    "style": "ERROR"
+                },
+                {
+                    "pattern": "^[ ]+\\[java\\][ \ta-zA-Z0-9._]+Exception:",
+                    "style": "ERROR"
+                },
+                {
+                    "pattern": "^[ ]+\\[java\\][ \t]+Caused by:",
+                    "style": "ERROR"
+                },
+                {
+                    "pattern": "\\[ERROR\\]",
+                    "style": "ERROR"
+                },
+                {
+                    "pattern": "^[ ]+\\[exec\\][ ]+[^ ]+[.](cpp|cxx|c|h|hpp|hxx|o|so|a):[0-9]+:",
+                    "style": "ERROR"
+                },
+                {
+                    "pattern": "[eE][rR][rR][oO][rR]:",
+                    "style": "ERROR"
+                },
+                {
+                    "pattern": "[eE][rR][rR][oO][rR] *[0-9]+",
+                    "style": "ERROR"
+                },
+                {
+                    "pattern": "[fF][aA][tT][aA][lL] [eE][rR][rR][oO][rR]",
+                    "style": "ERROR"
+                },
+                {
+                    "pattern": "[eE][rR][rR][oO][rR] [cC][oO][dD][eE]",
+                    "style": "ERROR"
+                },
+                {
+                    "pattern": "returned [1-9][0-9]* exit",
+                    "style": "ERROR"
+                },
+                {
+                    "pattern": "BUILD SUCCESSFUL",
+                    "style": "SUCCESS"
+                },
+                {
+                    "pattern": "BUILD FAILED",
+                    "style": "FAILURE"
+                },
+                {
+                    "pattern": " ((Errors|Failures):\\s*[1-9][0-9]*)",
+                    "style": "BAD"
+                },
+                {
+                    "pattern": " FAILED",
+                    "style": "BAD"
+                },
+                {
+                    "pattern": " ((Errors|Failures):\\s*0)[^0-9]",
+                    "style": "GOOD"
+                },
+                {
+                    "pattern": " Testsuite\\:",
+                    "style": "SECTION"
+                },
+                {
+                    "pattern": "(\\[[^ ]*\\])",
+                    "style": "INFO"
+                }
+            ]
+        },
+        {
+            "names": [
+                "log"
+            ],
+            "scanners": [
+                {
+                    "pattern": "WARN",
+                    "style": "WARNING"
+                },
+                {
+                    "pattern": "ERROR",
+                    "style": "ERROR"
+                },
+                {
+                    "pattern": "FATAL",
+                    "style": "BAD"
+                }
+            ]
+        },
+        {
+            "names": [
+                "svn"
+            ],
+            "scanners": [
+                {
+                    "pattern": "U[ ]+",
+                    "style": "INFO"
+                },
+                {
+                    "pattern": "Updated to revision",
+                    "style": "INFO"
+                },
+                {
+                    "pattern": "At revision",
+                    "style": "INFO"
+                },
+                {
+                    "pattern": "A[ ]+",
+                    "style": "HEADING"
+                },
+                {
+                    "pattern": "C[ ]+",
+                    "style": "ERROR"
+                },
+                {
+                    "pattern": "G[ ]+",
+                    "style": "SECTION"
+                },
+                {
+                    "pattern": "D[ ]+",
+                    "style": "WARNING"
+                }
+            ]
+        }
+    ],
+    "styles": {
+        "ADMIN": {
+            "bg": 4,
+            "bold": true,
+            "fg": 7,
+            "hide": false,
+            "marker": null,
+            "name": "Admin"
+        },
+        "BAD": {
+            "bg": null,
+            "bold": true,
+            "fg": 1,
+            "hide": false,
+            "marker": null,
+            "name": "Bad"
+        },
+        "DEBUG": {
+            "bg": null,
+            "bold": false,
+            "fg": 4,
+            "hide": false,
+            "marker": null,
+            "name": "Debug"
+        },
+        "DEFAULT": {
+            "bg": null,
+            "bold": false,
+            "fg": 7,
+            "hide": false,
+            "marker": null,
+            "name": "Default"
+        },
+        "ERROR": {
+            "bg": null,
+            "bold": true,
+            "fg": 1,
+            "hide": false,
+            "marker": "ERROR",
+            "name": "Error"
+        },
+        "FAILURE": {
+            "bg": 3,
+            "bold": true,
+            "fg": 1,
+            "hide": false,
+            "marker": null,
+            "name": "Failure"
+        },
+        "GOOD": {
+            "bg": null,
+            "bold": true,
+            "fg": 5,
+            "hide": false,
+            "marker": null,
+            "name": "Good"
+        },
+        "HEADING": {
+            "bg": null,
+            "bold": true,
+            "fg": 6,
+            "hide": false,
+            "marker": null,
+            "name": "Heading"
+        },
+        "HIDE": {
+            "bg": null,
+            "bold": false,
+            "fg": null,
+            "hide": true,
+            "marker": null,
+            "name": "Hide"
+        },
+        "INFO": {
+            "bg": null,
+            "bold": true,
+            "fg": 2,
+            "hide": false,
+            "marker": null,
+            "name": "Info"
+        },
+        "SECTION": {
+            "bg": null,
+            "bold": true,
+            "fg": 5,
+            "hide": false,
+            "marker": null,
+            "name": "Section"
+        },
+        "SUCCESS": {
+            "bg": 3,
+            "bold": true,
+            "fg": 2,
+            "hide": false,
+            "marker": "FAILURE",
+            "name": "Success"
+        },
+        "WARNING": {
+            "bg": null,
+            "bold": true,
+            "fg": 3,
+            "hide": false,
+            "marker": null,
+            "name": "Warning"
+        }
+    }
+}
+'''.replace('\\', '\\\\').replace('\t', '\\t')
+
+#=========== Main ==============================================================
+
 if __name__ == '__main__':
     from optparse import OptionParser
-    option_parser = OptionParser(description = "Follow and colorize a command's output.")
+    option_parser = OptionParser(description = '\n'.join([
+                                 "Follow, colorize, and capture a command's output.",
+                                 'Writes output to "%s" directory.' % Global.output_directory]))
     option_parser.add_option('-c', '--colorizer', type='string', dest='colorizer',
                              help='specify colorizer name')
     option_parser.add_option('-n', '--no-tee', action='store_true', dest='no_tee',
-                             help='disable teeing to output file')
+                             help='disable teeing (capturing) to output file')
     option_parser.add_option('-v', '--verbose', action='store_true', dest='verbose',
                              help='display verbose output')
     option_parser.add_option('-d', '--debug', action='store_true', dest='debug',
@@ -400,7 +682,11 @@ if __name__ == '__main__':
             reader = TestReader(test.name, test.text)
             options.colorizer = test.colorizer
         else:
-            reader = CommandReader(*args)
+            if len(args) > 0:
+                reader = CommandReader(*args)
+            else:
+                option_parser.print_help()
+                sys.exit(1)
         colorizer = get_colorizer(options.colorizer)
         if not colorizer:
             if options.colorizer:
@@ -412,3 +698,4 @@ if __name__ == '__main__':
             tailer.tail()
     except KeyboardInterrupt:
         warning('Interrupted')
+
