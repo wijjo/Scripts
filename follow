@@ -4,10 +4,13 @@
 ################################################################################
 
 import sys
-import os, os.path
+import os
 import re
 import subprocess
-import json
+try:
+    import json
+except ImportError:
+    json = None
 
 #==============================================================================
 
@@ -145,8 +148,6 @@ class Tailer(object):
         self.reader    = reader
         self.colorizer = colorizer
         self.ftee      = None
-
-    def __enter__(self):
         if not self.options.no_tee:
             path = os.path.join(Global.output_directory,
                                 '%s.out' % os.path.basename(self.reader.name))
@@ -154,9 +155,8 @@ class Tailer(object):
                 self.ftee = open(path, 'w')
             except Exception, e:
                 warning('Failed to open tee file "%s"' % path, e)
-        return self
 
-    def __exit__(self, type, value, traceback):
+    def close(self):
         if self.ftee:
             self.ftee.close()
 
@@ -206,33 +206,58 @@ def ansi_line(f, style, s):
     f.flush()
 
 def write_config_as_needed(rcgen):
-    #TODO error handling
     if rcgen or not os.path.exists(Global.config_path):
         if rcgen:
             print 'Generating configuration file "%s"...' % Global.config_path
         else:
             print 'Saving initial configuration file "%s"...' % Global.config_path
-        with open(Global.config_path, 'w') as f:
-            f.write(default_configuration)
+        try:
+            f = open(Global.config_path, 'w')
+        except (IOError, OSError), e:
+            abort('Failed to open configuration "%s" for writing.' % Global.config_path, e)
+        try:
+            try:
+                f.write(default_configuration)
+            except (IOError, OSError), e:
+                abort('Failed to write configuration "%s".' % Global.config_path, e)
+        finally:
+            f.close
 
 def read_config(styles, colorizers):
-    #TODO error handling
-    with open(Global.config_path) as f:
-        s = f.read()
-        doc = json.loads(s)
-        for name in doc['styles']:
-            jstyle = doc['styles'][name]
-            styles[name] = Style(jstyle['name'], fg     = jstyle['fg'],
-                                                 bg     = jstyle['bg'],
-                                                 bold   = jstyle['bold'],
-                                                 hide   = jstyle['hide'],
-                                                 marker = jstyle['marker'])
-        for jcolorizer in doc['colorizers']:
-            names = jcolorizer['names']
-            scanners = []
-            for jscanner in jcolorizer['scanners']:
-                scanners.append(Scanner(jscanner['pattern'], jscanner['style']))
-            colorizers.append(Colorizer(names, *scanners))
+    if json:
+        try:
+            f = open(Global.config_path)
+        except (IOError, OSError), e:
+            abort('Failed to open configuration "%s" for reading.' % Global.config_path, e)
+        try:
+            try:
+                s = f.read()
+                doc = json.loads(s)
+            except (IOError, OSError), e:
+                abort('Failed to read configuration "%s".' % Global.config_path, e)
+        finally:
+            f.close()
+    else:
+        # Older Python versions don't have json. Use the default configuration.
+        # Patch up the default configuration to use with Python eval.
+        # Obviously these straight substitutions are simplistic and error-prone.
+        config = default_configuration
+        for (s1, s2) in (('true', 'True'), ('false', 'False'), ('null', 'None')):
+            config = config.replace(s1, s2)
+        doc = eval(config)
+    for name in doc['styles']:
+        jstyle = doc['styles'][name]
+        styles[name] = Style(jstyle['name'], fg     = jstyle['fg'],
+                                             bg     = jstyle['bg'],
+                                             bold   = jstyle['bold'],
+                                             hide   = jstyle['hide'],
+                                             marker = jstyle['marker'])
+    for jcolorizer in doc['colorizers']:
+        names = jcolorizer['names']
+        scanners = []
+        for jscanner in jcolorizer['scanners']:
+            scanners.append(Scanner(jscanner['pattern'], jscanner['style']))
+        colorizers.append(Colorizer(names, *scanners))
 
 def configure(options):
     '''Initialize the user configuration file as needed from which the
@@ -694,8 +719,11 @@ if __name__ == '__main__':
             colorizer = get_colorizer(args[0])
             if colorizer is None:
                 colorizer = Colorizer()
-        with Tailer(options, reader, colorizer) as tailer:
+        tailer = Tailer(options, reader, colorizer)
+        try:
             tailer.tail()
+        finally:
+            tailer.close()
     except KeyboardInterrupt:
         warning('Interrupted')
 
