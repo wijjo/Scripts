@@ -4,10 +4,11 @@
 ################################################################################
 
 import sys
-import os, os.path
+import os
 import re
 import subprocess
 import json
+import shutil
 
 #==============================================================================
 
@@ -72,8 +73,12 @@ class Global:
 
     # Filled in when we know
     script_name = os.path.basename(sys.argv[0])
+    script_dir = os.path.dirname(os.path.realpath(sys.argv[0]))
+    lib_dir = os.path.join(script_dir, '%slib' % script_name)
+    default_configuration = os.path.join(lib_dir, '%src' % script_name)
     output_directory = ('.%s' % script_name)
     config_path = os.path.expanduser('~/.%src' % script_name)
+    sys.path.insert(0, lib_dir)
 
 def _message(f, tag, *msgs):
     '''Low level message display.'''
@@ -129,14 +134,6 @@ class CommandReader(object):
             proc.stdout.close()
         except Exception, e:
             warning('Exception running command: %s' % ' '.join(self.args), e)
-
-class TestReader(object):
-    def __init__(self, name, text):
-        self.name = name
-        self.text = text
-    def __iter__(self):
-        for line in self.text.split('\n'):
-            yield line
 
 class Tailer(object):
 
@@ -212,8 +209,7 @@ def write_config_as_needed(rcgen):
             print 'Generating configuration file "%s"...' % Global.config_path
         else:
             print 'Saving initial configuration file "%s"...' % Global.config_path
-        with open(Global.config_path, 'w') as f:
-            f.write(default_configuration)
+        shutil.copyfile(Global.default_configuration, Global.config_path)
 
 def read_config(styles, colorizers):
     #TODO error handling
@@ -245,411 +241,6 @@ def configure(options):
         print 'Creating output directory "%s"...' % Global.output_directory
         os.mkdir(Global.output_directory)
 
-class Test(object):
-    def __init__(self, name, colorizer, text):
-        self.name = name
-        self.colorizer = colorizer
-        self.text = text
-
-test_data = [
-    Test('ant', 'ant', '''\
-compile:
-   [depend] Deleted 17 out of date files in 0 seconds
-   [delete] Deleting: src/whatever.h
-    [javac] src/build.xml:28: warning: 'includeantruntime' was not set
-    [javac] Compiling 13 source files to obj
-
-licensecheck:
-     [exec] SUCCESS. Found 0 license text errors, 0 files containing tabs or trailing whitespace.
-
-ccompile:
-     [exec]      [exec] make: Nothing to be done for `main'.
-     [exec]      [exec] c++  -Wall xxx.cpp
-     [exec]      [exec] clang: warning: argument unused during compilation: '-rdynamic'
-     [exec]      [exec] LoggingTest:
-     [exec]      [exec] 	TestManagerSetLevels: PASSED.
-     [exec]      [exec] 	TestLoggerUsesProxyLevels: FAILED.
-     [exec]      [exec] FAILED
-     [exec]      [exec] IndexKeyTest:
-     [exec]      [exec] 	Int64KeyTest: PASSED.
-     [exec]      [exec] PASSED
-     [exec]      [exec] ===============================================================================
-     [exec]      [exec] TESTING COMPLETE (PASSED: 1, FAILED: 1)
-     [exec]      [exec] *** FAILURE ***
-     [exec]      [exec] ===============================================================================
-     [exec]
-     [exec] junit:
-     [exec]     [junit] Tests run:   4, Failures:   0, Errors:   0, Time elapsed: 5.66 sec
-     [exec]     [junit] Running org.voltdb.TestRestoreAgent
-     [exec]     [junit] Tests run:  21, Failures:   0, Errors:   0, Time elapsed: 34.01 sec
-     [exec]     [junit] Running org.voltdb.TestVoltDB
-     [exec]     [junit]     testConfigurationValidate failed an assertion.
-     [exec]     [junit]         org.voltdb.TestVoltDB(TestVoltDB.java:115)
-     [exec]     [junit] Tests run:   4, Failures:   1, Errors:   0, Time elapsed: 3.92 sec
-     [exec]     [junit] Test org.voltdb.TestVoltDB FAILED
-     [exec]     [junit] Running org.voltdb.jdbc.TestJDBCDriver
-     [exec]     [junit] Tests run:  17, Failures:   0, Errors:   0, Time elapsed: 3.32 sec
-     [exec]
-     [exec] BUILD FAILED
-     [exec] /Users/scooper/workspace/voltdb/build.xml:1241: JUnit had failures
-     [exec]
-     [exec] Total time: 50 minutes 39 seconds
-'''),
-]
-
-#=========== Default configuration =============================================
-
-# Defined so that entire ~/.followrc can be copied into this string.
-
-default_configuration = '''\
-{
-    "colorizers": [
-        {
-            "names": [
-                "java"
-            ],
-            "scanners": [
-                {
-                    "pattern": "(\\[INFO\\])",
-                    "style": "INFO"
-                },
-                {
-                    "pattern": "(\\[WARN\\])",
-                    "style": "WARNING"
-                },
-                {
-                    "pattern": "(\\[ERROR\\])",
-                    "style": "ERROR"
-                },
-                {
-                    "pattern": "\\[java\\][ \t]*([a-zA-Z.]*Exception):",
-                    "style": "ERROR"
-                }
-            ]
-        },
-        {
-            "names": [
-                "make",
-                "gmake"
-            ],
-            "scanners": [
-                {
-                    "pattern": "^\\+ ([A-Z][A-Z_0-9]*=.*|shift|case.*|'\\['.*|)$",
-                    "style": "HIDE"
-                },
-                {
-                    "pattern": "^\\+ \\[.*\\]$",
-                    "style": "HIDE"
-                },
-                {
-                    "pattern": "^[+] exec ",
-                    "style": "INFO"
-                },
-                {
-                    "pattern": "[wW][aA][rR][nN][iI][nN][gG]:",
-                    "style": "WARNING"
-                },
-                {
-                    "pattern": "[eE][rR][rR][oO][rR]:",
-                    "style": "ERROR"
-                },
-                {
-                    "pattern": "[eE][rR][rR][oO][rR] *[0-9]+",
-                    "style": "ERROR"
-                },
-                {
-                    "pattern": "[fF][aA][tT][aA][lL] [eE][rR][rR][oO][rR]",
-                    "style": "ERROR"
-                },
-                {
-                    "pattern": "[eE][rR][rR][oO][rR] [cC][oO][dD][eE]",
-                    "style": "ERROR"
-                },
-                {
-                    "pattern": "^\\s+(ar|ld|rm) ",
-                    "style": "INFO"
-                },
-                {
-                    "pattern": "^make(\\[\\d+\\])?:",
-                    "style": "HEADING"
-                }
-            ]
-        },
-        {
-            "names": [
-                "ant"
-            ],
-            "scanners": [
-                {
-                    "pattern": "FAILED: [1-9]",
-                    "style": "BAD"
-                },
-                {
-                    "pattern": "PASSED: [1-9]",
-                    "style": "GOOD"
-                },
-                {
-                    "pattern": "[\\]:] FAILED",
-                    "style": "BAD"
-                },
-                {
-                    "pattern": "[\\]:] PASSED",
-                    "style": "GOOD"
-                },
-                {
-                    "pattern": "\\[exec\\] SUCCESS",
-                    "style": "SUCCESS"
-                },
-                {
-                    "pattern": "^[a-zA-Z0-9_\\- ]+[^: ]*:",
-                    "style": "HEADING"
-                },
-                {
-                    "pattern": "\\[junit\\]   Running ",
-                    "style": "HEADING"
-                },
-                {
-                    "pattern": "[wW][aA][rR][nN][iI][nN][gG]:",
-                    "style": "WARNING"
-                },
-                {
-                    "pattern": "\\[WARNING\\]",
-                    "style": "WARNING"
-                },
-                {
-                    "pattern": "^[ ]+\\[javac\\][ ]+[^ ]+[.]java:[0-9]+:",
-                    "style": "ERROR"
-                },
-                {
-                    "pattern": "^[ ]+\\[java\\][ \ta-zA-Z0-9._]+Exception:",
-                    "style": "ERROR"
-                },
-                {
-                    "pattern": "^[ ]+\\[java\\][ \t]+Caused by:",
-                    "style": "ERROR"
-                },
-                {
-                    "pattern": "\\[ERROR\\]",
-                    "style": "ERROR"
-                },
-                {
-                    "pattern": "^[ ]+\\[exec\\][ ]+[^ ]+[.](cpp|cxx|c|h|hpp|hxx|o|so|a):[0-9]+:",
-                    "style": "ERROR"
-                },
-                {
-                    "pattern": "[eE][rR][rR][oO][rR]:",
-                    "style": "ERROR"
-                },
-                {
-                    "pattern": "[eE][rR][rR][oO][rR] *[0-9]+",
-                    "style": "ERROR"
-                },
-                {
-                    "pattern": "[fF][aA][tT][aA][lL] [eE][rR][rR][oO][rR]",
-                    "style": "ERROR"
-                },
-                {
-                    "pattern": "[eE][rR][rR][oO][rR] [cC][oO][dD][eE]",
-                    "style": "ERROR"
-                },
-                {
-                    "pattern": "returned [1-9][0-9]* exit",
-                    "style": "ERROR"
-                },
-                {
-                    "pattern": "BUILD SUCCESSFUL",
-                    "style": "SUCCESS"
-                },
-                {
-                    "pattern": "BUILD FAILED",
-                    "style": "FAILURE"
-                },
-                {
-                    "pattern": " ((Errors|Failures):\\s*[1-9][0-9]*)",
-                    "style": "BAD"
-                },
-                {
-                    "pattern": " FAILED",
-                    "style": "BAD"
-                },
-                {
-                    "pattern": " ((Errors|Failures):\\s*0)[^0-9]",
-                    "style": "GOOD"
-                },
-                {
-                    "pattern": " Testsuite\\:",
-                    "style": "SECTION"
-                },
-                {
-                    "pattern": "(\\[[^ ]*\\])",
-                    "style": "INFO"
-                }
-            ]
-        },
-        {
-            "names": [
-                "log"
-            ],
-            "scanners": [
-                {
-                    "pattern": "WARN",
-                    "style": "WARNING"
-                },
-                {
-                    "pattern": "ERROR",
-                    "style": "ERROR"
-                },
-                {
-                    "pattern": "FATAL",
-                    "style": "BAD"
-                }
-            ]
-        },
-        {
-            "names": [
-                "svn"
-            ],
-            "scanners": [
-                {
-                    "pattern": "U[ ]+",
-                    "style": "INFO"
-                },
-                {
-                    "pattern": "Updated to revision",
-                    "style": "INFO"
-                },
-                {
-                    "pattern": "At revision",
-                    "style": "INFO"
-                },
-                {
-                    "pattern": "A[ ]+",
-                    "style": "HEADING"
-                },
-                {
-                    "pattern": "C[ ]+",
-                    "style": "ERROR"
-                },
-                {
-                    "pattern": "G[ ]+",
-                    "style": "SECTION"
-                },
-                {
-                    "pattern": "D[ ]+",
-                    "style": "WARNING"
-                }
-            ]
-        }
-    ],
-    "styles": {
-        "ADMIN": {
-            "bg": 4,
-            "bold": true,
-            "fg": 7,
-            "hide": false,
-            "marker": null,
-            "name": "Admin"
-        },
-        "BAD": {
-            "bg": null,
-            "bold": true,
-            "fg": 1,
-            "hide": false,
-            "marker": null,
-            "name": "Bad"
-        },
-        "DEBUG": {
-            "bg": null,
-            "bold": false,
-            "fg": 4,
-            "hide": false,
-            "marker": null,
-            "name": "Debug"
-        },
-        "DEFAULT": {
-            "bg": null,
-            "bold": false,
-            "fg": 7,
-            "hide": false,
-            "marker": null,
-            "name": "Default"
-        },
-        "ERROR": {
-            "bg": null,
-            "bold": true,
-            "fg": 1,
-            "hide": false,
-            "marker": "ERROR",
-            "name": "Error"
-        },
-        "FAILURE": {
-            "bg": 3,
-            "bold": true,
-            "fg": 1,
-            "hide": false,
-            "marker": null,
-            "name": "Failure"
-        },
-        "GOOD": {
-            "bg": null,
-            "bold": true,
-            "fg": 5,
-            "hide": false,
-            "marker": null,
-            "name": "Good"
-        },
-        "HEADING": {
-            "bg": null,
-            "bold": true,
-            "fg": 6,
-            "hide": false,
-            "marker": null,
-            "name": "Heading"
-        },
-        "HIDE": {
-            "bg": null,
-            "bold": false,
-            "fg": null,
-            "hide": true,
-            "marker": null,
-            "name": "Hide"
-        },
-        "INFO": {
-            "bg": null,
-            "bold": true,
-            "fg": 2,
-            "hide": false,
-            "marker": null,
-            "name": "Info"
-        },
-        "SECTION": {
-            "bg": null,
-            "bold": true,
-            "fg": 5,
-            "hide": false,
-            "marker": null,
-            "name": "Section"
-        },
-        "SUCCESS": {
-            "bg": 3,
-            "bold": true,
-            "fg": 2,
-            "hide": false,
-            "marker": "FAILURE",
-            "name": "Success"
-        },
-        "WARNING": {
-            "bg": null,
-            "bold": true,
-            "fg": 3,
-            "hide": false,
-            "marker": null,
-            "name": "Warning"
-        }
-    }
-}
-'''.replace('\\', '\\\\').replace('\t', '\\t')
-
 #=========== Main ==============================================================
 
 if __name__ == '__main__':
@@ -659,6 +250,8 @@ if __name__ == '__main__':
                                  'Writes output to "%s" directory.' % Global.output_directory]))
     option_parser.add_option('-c', '--colorizer', type='string', dest='colorizer',
                              help='specify colorizer name')
+    option_parser.add_option('-f', '--file', action='store_true', dest='file',
+                             help='arguments are files or directories to tail (like tail -f)')
     option_parser.add_option('-n', '--no-tee', action='store_true', dest='no_tee',
                              help='disable teeing (capturing) to output file')
     option_parser.add_option('-v', '--verbose', action='store_true', dest='verbose',
@@ -673,13 +266,14 @@ if __name__ == '__main__':
     configure(options)
     try:
         if options.test:
-            for test in test_data:
+            import followlib.test
+            for test in followlib.test.test_data:
                 if test.name == options.test:
                     break
             else:
                 abort('Could not find test "%s"' % options.test,
                       'Known tests: %s' % ' '.join([t.name for t in test_data]))
-            reader = TestReader(test.name, test.text)
+            reader = followlib.test.TestReader(test.name, test.text)
             options.colorizer = test.colorizer
         else:
             if len(args) > 0:
