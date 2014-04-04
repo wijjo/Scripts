@@ -73,6 +73,7 @@ class Tags:
     HOST      = 'host'
     USER      = 'user'
     PORT      = 'port'
+    METHOD    = 'method'
     lists     = [INCLUDES, EXCLUDES]
     keywords  = [REFERENCE]
     numbers   = [PORT]
@@ -147,9 +148,9 @@ class Syncer(object):
         os.chdir(os.path.dirname(op.get(Tags.LOCAL)))
         src = '{local}{sep}'.format(local = op.get(Tags.LOCAL), sep = os.sep)
         if op.has(Tags.HOST):
-            tgt = '{user}@{host}:{remote}'.format(user   = op.get(Tags.USER),
-                                                  host   = op.get(Tags.HOST),
-                                                  remote = op.get(Tags.REMOTE))
+            tgt = '{user}@{host}:{remote}'.format(user=op.get(Tags.USER, default=os.getlogin()),
+                                                  host=op.get(Tags.HOST),
+                                                  remote=op.get(Tags.REMOTE))
         else:
             tgt = op.get(Tags.REMOTE)
         if not self.show:
@@ -158,6 +159,7 @@ class Syncer(object):
                         op.get(Tags.PORT),
                         op.get(Tags.INCLUDES),
                         op.get(Tags.EXCLUDES),
+                        op.get(Tags.METHOD),
                         True,
                         op.name)
         if self.show or not self.pretend:
@@ -166,6 +168,7 @@ class Syncer(object):
                         op.get(Tags.PORT),
                         op.get(Tags.INCLUDES),
                         op.get(Tags.EXCLUDES),
+                        op.get(Tags.METHOD),
                         False,
                         op.name)
 
@@ -187,6 +190,7 @@ class Syncer(object):
                         op.get(Tags.PORT),
                         op.get(Tags.INCLUDES),
                         op.get(Tags.EXCLUDES),
+                        op.get(Tags.METHOD),
                         True,
                         op.name)
         if self.show or not self.pretend:
@@ -195,16 +199,24 @@ class Syncer(object):
                         op.get(Tags.PORT),
                         op.get(Tags.INCLUDES),
                         op.get(Tags.EXCLUDES),
+                        op.get(Tags.METHOD),
                         False,
                         op.name)
 
-    def _rsync(self, source, target, port, includes, excludes, dryrun, label):
+    def _rsync(self, source, target, port, includes, excludes, method, dryrun, label):
         opts = RsyncOptions.leading + (['"{source}"'.format(source = source),
                                         '"{target}"'.format(target = target)]
                                         + RsyncOptions.trailing)
+        if method:
+            if method.lower() == 'checksum':
+                opts.append('--checksum')
+            elif method.lower() == 'size':
+                opts.append('--size-only')
+            else:
+                console.warning('Bad method: %s' % method)
         opts.extend(['--include="{include}"'.format(include = include) for include in includes])
         opts.extend(['--exclude="{exclude}"'.format(exclude = exclude) for exclude in excludes])
-        if source.find('@') >= 0 or target.find('@') >= 0:
+        if source.find('@') >= 0 or target.find('@') >= 0 and port:
             opts.append('-e "ssh -p {port}"'.format(port = port))
         if not self.keep:
             opts.extend(RsyncOptions.delete)
