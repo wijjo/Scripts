@@ -11,32 +11,54 @@ import optparse
 
 class Runtime:
     (directory, program) = os.path.split(sys.argv[0])
+    base_directory = os.path.dirname(directory)
     config = os.path.expanduser('~/.{0}rc'.format(program))
 
-# Add the program directory to support installation of sclib in a subdirectory.
-if Runtime.directory not in sys.path:
-    sys.path.insert(0, Runtime.directory)
+# Add the program directory to support sclib in a subfolder.
+if os.path.exists(os.path.join(Runtime.directory)):
+    if Runtime.directory not in sys.path:
+        sys.path.append(Runtime.directory)
+# Add the base directory to support sclib in a parallel folder.
+if os.path.exists(os.path.join(Runtime.base_directory)):
+    if Runtime.base_directory not in sys.path:
+        sys.path.append(Runtime.base_directory)
 from sclib import configmapper, console, listutil
 
-class Opt:
-    def __init__(self, letter, word, action, dest, help):
+class Option:
+    def __init__(self, letter, word, dest, help):
         self.letter = letter
         self.word   = word
-        self.action = action
         self.dest   = dest
         self.help   = help
 
-class Bool(Opt):
+class Boolean(Option):
     def __init__(self, letter, word, dest, help):
-        Opt.__init__(self, letter, word, 'store_true', dest, help)
+        Option.__init__(self, letter, word, dest, help)
+    def add(self, parser):
+        parser.add_option(self.letter,
+                          self.word,
+                          action='store_true',
+                          dest=self.dest,
+                          help=self.help)
+
+class Integer(Option):
+    def __init__(self, letter, word, dest, help):
+        Option.__init__(self, letter, word, dest, help)
+    def add(self, parser):
+        parser.add_option(self.letter,
+                          self.word,
+                          type='int',
+                          action='store',
+                          dest=self.dest,
+                          help=self.help)
 
 class CommandLine:
     commands = ['dump', 'help', 'list', 'pull', 'push', 'setup']
     options  = [
-        Bool('-k', '--keep'     , 'keep'   , "keep target files deleted from source (push/pull)"),
-        Bool('-n', '--dry-run'  , 'pretend', 'perform dry run only (push/pull)'),
-        Bool('-s', '--show-only', 'show'   , 'show rsync commands without executing (push/pull)'),
-        Bool('-v', '--verbose'  , 'verbose', 'display verbose messages'),
+        Boolean('-k', '--keep'     , 'keep'   , "keep target files deleted from source (push/pull)"),
+        Boolean('-n', '--dry-run'  , 'pretend', 'perform dry run only (push/pull)'),
+        Boolean('-s', '--show-only', 'show'   , 'show rsync commands without executing (push/pull)'),
+        Boolean('-v', '--verbose'  , 'verbose', 'display verbose messages'),
     ]
     USAGE = '''%prog [OPTIONS] COMMAND [COMMAND_OPTS] [COMMAND_ARGS]
 
@@ -58,7 +80,6 @@ class RsyncOptions:
         '--recursive',
         '--cvs-exclude',
         '--omit-dir-times',
-        '--modify-window=1',
     ]
     delete = ['--delete']
 
@@ -74,6 +95,7 @@ class Tags:
     USER      = 'user'
     PORT      = 'port'
     METHOD    = 'method'
+    FUZZ      = 'fuzz'
     lists     = [INCLUDES, EXCLUDES]
     keywords  = [REFERENCE]
     numbers   = [PORT]
@@ -160,6 +182,7 @@ class Syncer(object):
                         op.get(Tags.INCLUDES),
                         op.get(Tags.EXCLUDES),
                         op.get(Tags.METHOD),
+                        op.get(Tags.FUZZ),
                         True,
                         op.name)
         if self.show or not self.pretend:
@@ -169,6 +192,7 @@ class Syncer(object):
                         op.get(Tags.INCLUDES),
                         op.get(Tags.EXCLUDES),
                         op.get(Tags.METHOD),
+                        op.get(Tags.FUZZ),
                         False,
                         op.name)
 
@@ -177,10 +201,10 @@ class Syncer(object):
             return
         os.chdir(os.path.dirname(op.get(Tags.LOCAL)))
         if op.has(Tags.HOST):
-            src = '{user}@{host}:{remote}{sep}'.format(user   = op.get(Tags.USER),
-                                                       host   = op.get(Tags.HOST),
-                                                       remote = op.get(Tags.REMOTE),
-                                                       sep    = os.sep)
+            src = '{user}@{host}:{remote}{sep}'.format(user=op.get(Tags.USER, default=os.getlogin()),
+                                                       host=op.get(Tags.HOST),
+                                                       remote=op.get(Tags.REMOTE),
+                                                       sep=os.sep)
         else:
             src = op.get(Tags.REMOTE)
         tgt = op.get(Tags.LOCAL)
@@ -191,6 +215,7 @@ class Syncer(object):
                         op.get(Tags.INCLUDES),
                         op.get(Tags.EXCLUDES),
                         op.get(Tags.METHOD),
+                        op.get(Tags.FUZZ),
                         True,
                         op.name)
         if self.show or not self.pretend:
@@ -200,23 +225,30 @@ class Syncer(object):
                         op.get(Tags.INCLUDES),
                         op.get(Tags.EXCLUDES),
                         op.get(Tags.METHOD),
+                        op.get(Tags.FUZZ),
                         False,
                         op.name)
 
-    def _rsync(self, source, target, port, includes, excludes, method, dryrun, label):
+    def _rsync(self, source, target, port, includes, excludes, method, fuzz, dryrun, label):
         opts = RsyncOptions.leading + (['"{source}"'.format(source = source),
                                         '"{target}"'.format(target = target)]
                                         + RsyncOptions.trailing)
         if method:
             if method.lower() == 'checksum':
                 opts.append('--checksum')
+                opts.append('--update')
             elif method.lower() == 'size':
                 opts.append('--size-only')
             else:
                 console.warning('Bad method: %s' % method)
+        if fuzz:
+            try:
+                opts.append('--modify-window=%d' % int(fuzz))
+            except ValueError:
+                console.abort('Fuzz value is not an integer: %s' % fuzz)
         opts.extend(['--include="{include}"'.format(include = include) for include in includes])
         opts.extend(['--exclude="{exclude}"'.format(exclude = exclude) for exclude in excludes])
-        if source.find('@') >= 0 or target.find('@') >= 0 and port:
+        if (source.find('@') >= 0 or target.find('@') >= 0) and port:
             opts.append('-e "ssh -p {port}"'.format(port = port))
         if not self.keep:
             opts.extend(RsyncOptions.delete)
@@ -263,7 +295,7 @@ def parse_command_line():
     parser = optparse.OptionParser()
     parser.set_usage(CommandLine.USAGE)
     for o in CommandLine.options:
-        parser.add_option(o.letter, o.word, action = o.action, dest = o.dest, help = o.help)
+        o.add(parser)
     (options, args) = parser.parse_args()
     if len(args) < 1:
         console.error(Messages.NO_COMMAND)
