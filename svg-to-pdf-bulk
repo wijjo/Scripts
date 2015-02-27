@@ -1,0 +1,30 @@
+#!/usr/bin/env python
+
+import sys
+import os
+
+def iter_svg(root):
+    for dir, subdirs, files in os.walk(root):
+        for file in files:
+            if os.path.splitext(file)[1].lower() == '.svg':
+                yield os.path.join(dir, file)
+
+def main():
+    failed = []
+    for svg in iter_svg('.'):
+        pdf = '%s.pdf' % os.path.splitext(svg[2:])[0]
+        if os.system('inkscape -z -A "%s" "%s"' % (pdf, svg)) == 0:
+            print '::: SUCCEEDED: %s' % svg
+            os.system('rm -vf "%s"' % svg)
+        else:
+            print '*** FAILED: %s' % svg
+            failed.append(svg)
+    if failed:
+        print '''
+=== FAILED ===
+
+%s''' % '\n'.join(failed)
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()

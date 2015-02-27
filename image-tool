@@ -1,0 +1,147 @@
+#!/usr/bin/env python
+
+import sys
+import os
+import glob
+import re
+
+from lib import import_python_misc
+import python_misc.cli as cli
+import python_misc.logger as logger
+import python_misc.run as run
+
+# Matches identity output without the file name at the front.
+re_identify = re.compile(r'(\w+)\s+(\d+)x(\d+)\s+(\d+)x(\d+)[+](\d+)[+](\d+)\s+.*', re.IGNORECASE)
+
+class Chopper(object):
+
+    def __init__(self, xgrid, ygrid, xoffset, yoffset, dryrun):
+        self.xgrid = xgrid
+        self.ygrid = ygrid
+        self.xoffset = xoffset
+        self.yoffset = yoffset
+        self.dryrun = dryrun
+
+    def identify(self, path):
+        cmd = run.Command('identify', path)
+        width = height = None
+        for line in cmd.pipe():
+            output = line[len(path)+1:]
+            m = re_identify.search(line)
+            if not m is None:
+                width = int(m.group(2))
+                height = int(m.group(3))
+        if width is None:
+            raise Exception('Unable to indentify image file: %s' % path)
+        return (width, height)
+
+
+    def chop(self, path, base=None):
+        (image_width, image_height) = self.identify(path)
+        width = image_width / self.xgrid
+        height = image_height / self.ygrid
+        id = 0
+        for ygrid in range(self.ygrid):
+            y = self.yoffset + (height * ygrid)
+            for xgrid in range(self.xgrid):
+                id += 1
+                x = self.xoffset + (width * xgrid)
+                geometry = '%sx%s+%s+%s' % (width, height, x, y)
+                if base is None:
+                    name = os.path.splitext(os.path.basename(path))[0]
+                else:
+                    name = base
+                path_out = '%(name)s-%(id)s.png' % locals()
+                logger.info(path_out)
+                cmd = 'convert %(path)s -crop %(geometry)s %(path_out)s' % locals()
+                if self.dryrun:
+                    print cmd
+                else:
+                    if os.system(cmd) != 0:
+                        logger.abort('Crop operation failed.')
+
+@cli.Command(
+    name='chop',
+    description='Chop up one or more images based on a grid specification.',
+    args=[
+        cli.Integer('xgrid', 'number of X grid elements'),
+        cli.Integer('ygrid', 'number of Y grid elements'),
+        cli.String('input_image', 'image file path or wildcard pattern', nargs='+'),
+        cli.Integer('xoffset', 'X offset', '-x', '--x-offset', default=0),
+        cli.Integer('yoffset', 'Y offset', '-y', '--y-offset', default=0),
+        cli.String('output_base', 'custom base name for output files', '-o', '--output-base'),
+    ],
+)
+def _chop(runner):
+    chopper = Chopper(runner.cmdargs.xgrid,
+                      runner.cmdargs.ygrid,
+                      runner.cmdargs.xoffset,
+                      runner.cmdargs.yoffset,
+                      runner.cmdargs.dryrun)
+    for arg in runner.cmdargs.input_image:
+        for path in glob.glob(os.path.expanduser(os.path.expandvars(arg))):
+            if os.path.exists(path):
+                cmd = run.Command('identify', arg)
+                for line in cmd.pipe():
+                    output = line[len(path)+1:]
+                    m = re_identify.search(line)
+                    if not m is None:
+                        chopper.chop(path, base=runner.cmdargs.output_base)
+                    else:
+                        logger.error(line)
+
+@cli.Command(
+    name='ios-icons',
+    description='''\
+Create iOS icon set from source image(s).
+Uses the input file base name as the output file base name.''',
+    args=[
+        cli.String('input_image', 'image file path or wildcard pattern', nargs='+'),
+        cli.String('output_base', 'custom base name for output files', '-o', '--output-base'),
+    ],
+)
+def _ios_icons(runner):
+    for arg in runner.cmdargs.input_image:
+        for path in glob.glob(os.path.expanduser(os.path.expandvars(arg))):
+            if os.path.exists(path):
+                def resize(pixels, *copies):
+                    if runner.cmdargs.output_base is None:
+                        basename = os.path.splitext(os.path.basename(path))[0]
+                    else:
+                        basename = runner.cmdargs.output_base
+                    for copy in copies:
+                        output = '%(basename)s-%(copy)s.png' % locals()
+                        command = 'convert -resize %(pixels)sx%(pixels)s %(path)s %(output)s' % locals()
+                        if runner.cmdargs.dryrun:
+                            print command
+                        else:
+                            print output
+                            os.system(command)
+                resize(29, 'ipad-settings-1x')
+                resize(40, 'ipad-spotlight-1x')
+                resize(58, 'iphone-settings-2x', 'ipad-settings-2x')
+                resize(76, 'ipad-app-1x')
+                resize(80, 'iphone-spotlight-2x', 'ipad-spotlight-2x')
+                resize(87, 'iphone-settings-3x')
+                resize(120, 'iphone-spotlight-3x', 'iphone-app-2x')
+                resize(152, 'ipad-app-2x')
+                resize(180, 'iphone-app-3x')
+
+def main():
+    parser = cli.Parser(
+        'Operate on image files.',
+        cli.Boolean('dryrun', "perform dry run - display, but don't execute commands",
+                    '-n', '--dry-run'),
+        cli.Boolean('verbose', "enable verbose messages",
+                    '-v', '--verbose')
+    )
+    parser.parse()
+    logger.set_verbose(parser.cmdargs.verbose)
+    try:
+        parser.run()
+    except KeyboardInterrupt:
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+defaults write com.manytricks.Moom "Local Hot Key Filter Mask" -int 1835008

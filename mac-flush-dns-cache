@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# http://coolestguidesontheplanet.com/clear-the-local-dns-cache-in-osx/
+
+IFS=. read V1 V2 V3 <<<"$(sw_vers -productVersion)"
+
+if [ "$V1" = "10" ]; then
+    if [ "$V2" = "4" ]; then
+        lookupd -flushcache
+    elif [ "$V2" = "5" -o "$V2" = "6" ]; then
+        dscacheutil -flushcache
+    elif [ "$V2" = "7" -o "$V2" = "8" ]; then
+        sudo killall -HUP mDNSResponder
+    elif [ "$V2" = "9" ]; then
+        dscacheutil -flushcache
+        sudo killall -HUP mDNSResponder
+    elif [ "$V2" = "10" ]; then
+        sudo discoveryutil udnsflushcaches
+    fi
+fi

@@ -1,0 +1,89 @@
+#!/usr/bin/python
+
+import sys, os, smtplib, email, imp
+
+from lib import import_python_misc
+import python_misc.utility as utility
+
+
+CONFIG_PATH = os.path.expanduser(os.path.join('~', '.kindle-send.py'))
+
+if not os.path.exists(CONFIG_PATH):
+    print '"%s" missing - generating a sample...' % CONFIG_PATH
+    filetool = utility.FileTool(expandvars=True)
+    filetool.save(CONFIG_PATH, '''\
+# These are sample values. Please customize for your needs.
+to_addr = "LOGNAME@free.kindle.com"
+from_addr = "LOGNAME@example.com"
+smtp_user = "LOGNAME@example.com"
+smtp_password = "password"
+'''
+)
+    sys.exit(1)
+
+sys.dont_write_bytecode = True
+try:
+    with open(CONFIG_PATH) as f:
+        Config = imp.load_module('Config', f, CONFIG_PATH, ('.py', 'r', imp.PY_SOURCE))
+except Exception, e:
+    sys.stderr.write('ERROR: Unable to load Config module (%s)\n   %s' % (CONFIG_PATH, str(e)))
+    sys.exit(1)
+finally:
+    sys.dont_write_bytecode = True
+
+class Abort(Exception): pass
+
+def mutt_send(address, subject, body, *attachments):
+    aargs = ''
+    for attachment in attachments:
+        aargs += ' -a "%s"' % attachment
+    rc = os.system('echo \'%s\' | mutt -s "%s"%s -- "%s"' % (body, subject, aargs, address))
+    if rc != 0:
+        raise Abort('Send command returned error code %d' % rc)
+
+def smtp_send(address, subject, body, *attachments):
+    msg = email.MIMEMultipart.MIMEMultipart()
+    msg['From'   ] = Config.from_addr
+    msg['To'     ] = Config.to_addr
+    msg['Date'   ] = email.Utils.formatdate(localtime=True)
+    msg['Subject'] = subject
+    msg.attach(email.MIMEText.MIMEText(body))
+    for attachment in attachments:
+        part = email.MIMEBase.MIMEBase('application', "octet-stream")
+        part.set_payload(open(attachment,"rb").read() )
+        email.Encoders.encode_base64(part)
+        part.add_header('Content-Disposition', 'attachment; filename="%s"'
+                           % os.path.basename(attachment))
+        msg.attach(part)
+    smtp = smtplib.SMTP('smtp.gmail.com', 587)
+    smtp.ehlo()
+    smtp.starttls()
+    smtp.ehlo()
+    smtp.login(Config.smtp_user, Config.smtp_password)
+    smtp.sendmail(Config.from_addr, Config.to_addr, msg.as_string())
+    smtp.close()
+
+def main():
+    for doc in sys.argv[1:]:
+        if not os.path.isfile(doc):
+            raise Abort('"%s" does not exist' % doc)
+    for doc in sys.argv[1:]:
+        ext = os.path.splitext(doc)[1]
+        if ext.lower() in ('.mobi', '.azw'):
+            print('Mailing "%s" to %s...' % (doc, Config.to_addr))
+            smtp_send(Config.to_addr, doc, 'Attached "%s"' % doc, doc)
+        else:
+            print('Mailing and converting "%s" to %s...' % (doc, Config.to_addr))
+            smtp_send(Config.to_addr, 'convert', 'Attached "%s"' % doc, doc)
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(1)
+    except Abort, e:
+        sys.stderr.write('ERROR: %s\n' % str(e))
+    except IOError, e:
+        sys.stderr.write('I/O ERROR: %s\n' % str(e))
+    except OSError, e:
+        sys.stderr.write('OS ERROR: %s\n' % str(e))

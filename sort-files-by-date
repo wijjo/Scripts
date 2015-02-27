@@ -1,0 +1,31 @@
+#!/usr/bin/env python
+
+import sys, os, time, shutil
+
+class File(object):
+    def __init__(self, name):
+        self.name = name
+        self.mtime = os.stat(name).st_mtime
+    def __cmp__(self, other):
+        return cmp(self.mtime, other.mtime)
+
+def main():
+    print 'Reading files...'
+    files = []
+    for name in os.listdir('.'):
+        if os.path.isfile(name):
+            files.append(File(name))
+    print 'Sorting %d files...' % len(files)
+    files.sort()
+    stime_last = None
+    for file in files:
+        stime = time.strftime('%y-%m-%d', time.gmtime(file.mtime))
+        if stime_last is None or stime != stime_last:
+            print stime
+            stime_last = stime
+            if not os.path.isdir(stime):
+                os.mkdir(stime)
+        shutil.move(file.name, stime)
+
+if __name__ == '__main__':
+    main()
