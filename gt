@@ -1,0 +1,239 @@
+#!/usr/bin/env python
+
+import sys
+import os
+import time
+import zipfile
+
+from lib import import_python_misc
+import python_misc.cli as cli
+import python_misc.git as git
+import python_misc.logger as logger
+import python_misc.run as run
+import python_misc.utility as utility
+
+
+class G:
+    state_file_name = 'giv.current'
+    workspace_script = 'giv_workspace.sh'
+
+
+#===============================================================================
+def main():
+#===============================================================================
+    parser = cli.Parser(
+        'Various commands for working in a Git environment.',
+        cli.Boolean('dryrun', "perform dry run - display, but don't execute commands",
+                    '-n', '--dry-run'),
+        cli.Boolean('pause', "pause before executing each command",
+                    '-p', '--pause'),
+        cli.Boolean('verbose', "enable verbose messages",
+                    '-v', '--verbose')
+    )
+    parser.parse()
+    logger.set_verbose(parser.cmdargs.verbose)
+    parser.run()
+
+
+#===============================================================================
+@cli.Command(
+    name='pending',
+    description='List uncommitted changes.',
+    args=[
+        cli.String('format', 'format specification: l=long, s=short (default)',
+                   '-f', '--format', default='s'),
+        cli.String('order', 'order specification: t=time, n=name (default)',
+                   '-o', '--order', default='n'),
+    ],
+)
+#===============================================================================
+def _pending(runner):
+    if runner.cmdargs.format not in ['l', 's']:
+        logger.abort('Format must be "s" (short) or "l" (long).',
+                     'Short format is the default')
+    if runner.cmdargs.order not in ['n', 't']:
+        logger.abort('Order must be "n" (natural) or "t" (time).',
+                     'Natural ordering is the default')
+    rootdir = git.git_project_root()
+    savedir = os.getcwd()
+    os.chdir(rootdir)
+    try:
+        if runner.cmdargs.order == 't':
+            changes = git.get_changes_by_time()
+        else:
+            changes = git.get_changes()
+        for change in changes:
+            if change.path2:
+                path = change.path2
+            else:
+                path = change.path
+            if runner.cmdargs.format == 'l':
+                try:
+                    col1 = time.strftime('%x  %X', time.localtime(os.stat(path).st_mtime))
+                except OSError:
+                    col1 = '(deleted)'
+                print '%3s  %17s  %s' % (change.flag, col1, path)
+            else:
+                print path
+    finally:
+        os.chdir(savedir)
+
+
+#===============================================================================
+@cli.Command(
+    name='zip',
+    description='Archive uncommitted changes.',
+    args=[
+        cli.Boolean('all', 'save all, including unmanaged files', '-a', '--all'),
+        cli.String('output', 'output directory', '-o', '--output', default='../WIP'),
+    ],
+)
+#===============================================================================
+def _zip(runner):
+    rootdir = git.git_project_root()
+    branch_name = git.get_local_branch()
+    timestamp = time.strftime('%y%m%d%H%M%S')
+    savedir = os.getcwd()
+    os.chdir(rootdir)
+    if not os.path.isdir(runner.cmdargs.output):
+        logger.info('Creating output directory "%s"...' % runner.cmdargs.output)
+        os.makedirs(runner.cmdargs.output)
+    try:
+        root_name = os.path.basename(rootdir)
+        zip_name = 'uncommitted-%s-%s-%s.zip' % (root_name, branch_name, timestamp)
+        zip_path = os.path.realpath(os.path.join(runner.cmdargs.output, zip_name))
+        file_paths = []
+        for change in git.iter_changes():
+            if change.flag.startswith('R'):
+                file_paths.append(change.path2)
+            elif change.flag != 'D' and change.path != zip_path:
+                if runner.cmdargs.all or change.flag != '??':
+                    if runner.cmdargs.dryrun:
+                        sys.stdout.write('+%s\n' % change.path)
+                    file_paths.append(change.path)
+        if not file_paths:
+            sys.stdout.write('%s: Nothing to archive.\n' % root_name)
+        if not runner.cmdargs.dryrun and file_paths:
+            sys.stdout.write('Saving archive file %s ...\n' % zip_path)
+            zip_file = zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED)
+            for path in file_paths:
+                sys.stdout.write('+%s\n' % path)
+                zip_file.write(path)
+            zip_file.close()
+    finally:
+        os.chdir(savedir)
+
+
+#===============================================================================
+#@cli.Command(
+#    name='delete',
+#    description='Delete a branch (local and remote).',
+#)
+#===============================================================================
+#def _branch_delete(runner):
+#    abort("Branch delete has not been implemented yet.")
+
+
+#===============================================================================
+@cli.Command(
+    name='new',
+    description='Make a new branch.',
+    args=[
+        cli.String('ancestor', 'ancestor branch name', '-a', default=None),
+        cli.String('branch', 'branch name'),
+    ],
+)
+#===============================================================================
+def _new(runner):
+    folder = runner.cmdargs.branch
+    runner.update(folder=folder)
+    runner.shell('git fetch')
+    runner.shell('git checkout master')
+    runner.shell('git pull')
+    git.create_branch(None,
+                      runner.cmdargs.branch,
+                      runner.cmdargs.ancestor,
+                      create_remote=True,
+                      dryrun=runner.cmdargs.dryrun,
+                      verbose=runner.cmdargs.verbose)
+
+
+#===============================================================================
+@cli.Command(
+    name='branches',
+    description='List my branches and unmerged commits.',
+)
+#===============================================================================
+def _branches(runner):
+    info = git.get_info()
+    for branch in git.iter_branches(user = info.user.name):
+        sys.stdout.write('%s\n' % branch)
+        for commit in git.iter_unmerged_commits(branch):
+            sys.stdout.write('   %s %s\n' % (commit.identifier, commit.comment))
+
+
+#===============================================================================
+@cli.Command(
+    name='rename',
+    description='Rename local and remote branch.',
+    args=[
+        cli.String('remotename', 'remote branch name, if different from local', '-r'),
+        cli.String('branch', 'branch name'),
+    ],
+)
+#===============================================================================
+def _rename(runner):
+    newlocal = runner.cmdargs.branch
+    if runner.cmdargs.remotename:
+        newremote = runner.cmdargs.remotename
+    else:
+        newremote = newlocal
+    for s in run.pipe_cmd('git', 'status'):
+        if s.startswith('# On branch '):
+            oldbranch = s[12:]
+            break
+    else:
+        logger.abort('Not in a GitHub-managed folder.')
+    runner.update(newlocal=newlocal, newremote=newremote, oldbranch=oldbranch)
+    runner.shell('git branch -m %(oldbranch)s %(newlocal)s')
+    runner.shell('git push origin %(newremote)s')
+    runner.shell('git branch --set-upstream %(newlocal)s origin/%(newremote)s')
+
+
+#===============================================================================
+@cli.Command(
+    name='review',
+    description='Submit a pull request for review.',
+    args=[
+        cli.String('title', 'pull request title'),
+    ],
+)
+#===============================================================================
+def _review(runner):
+    tracking_branch = git.get_tracking_branch()
+    branch = tracking_branch.split('/')[1]
+    if not utility.find_executable('hub'):
+        logger.abort('The hub command must be installed. (http://defunkt.io/hub/)',
+                     'OS X Homebrew command: brew install hub')
+    runner.shell('hub pull-request "%s" -b %s' % (runner.cmdargs.title, branch))
+
+
+#===============================================================================
+@cli.Command(
+    name='url',
+    description='Display the repository URL.',
+    args=[
+    ],
+)
+#===============================================================================
+def _url(runner):
+    print git.get_repository_url()
+
+#===============================================================================
+if __name__ == '__main__':
+#===============================================================================
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(1)
+
