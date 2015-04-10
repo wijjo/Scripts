@@ -10,7 +10,7 @@ import os
 import optparse
 
 class Runtime:
-    (directory, program) = os.path.split(sys.argv[0])
+    (directory, program) = os.path.split(os.path.realpath(sys.argv[0]))
     base_directory = os.path.dirname(directory)
     config = os.path.expanduser('~/.{0}rc'.format(program))
 
@@ -18,11 +18,12 @@ class Runtime:
 if os.path.exists(os.path.join(Runtime.directory)):
     if Runtime.directory not in sys.path:
         sys.path.append(Runtime.directory)
-# Add the base directory to support sclib in a parallel folder.
-if os.path.exists(os.path.join(Runtime.base_directory)):
-    if Runtime.base_directory not in sys.path:
-        sys.path.append(Runtime.base_directory)
-from sclib import configmapper, console, listutil
+# Add python_misc if it's under the parent folder.
+python_misc = os.path.join(Runtime.base_directory, 'python_misc')
+if os.path.exists(python_misc):
+    if python_misc not in sys.path:
+        sys.path.append(python_misc)
+from python_misc import configmapper, console, listutil
 
 class Option:
     def __init__(self, letter, word, dest, help):
