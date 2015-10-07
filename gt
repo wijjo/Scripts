@@ -100,7 +100,7 @@ def _zip(runner):
         os.makedirs(runner.cmdargs.output)
     try:
         root_name = os.path.basename(rootdir)
-        zip_name = 'wip-%s-%s-%s.zip' % (root_name, branch_name, timestamp).replace('/', '_')
+        zip_name = ('wip-%s-%s-%s.zip' % (root_name, branch_name, timestamp)).replace('/', '_')
         zip_path = os.path.realpath(os.path.join(runner.cmdargs.output, zip_name))
         file_paths = []
         for change in git.iter_changes():
