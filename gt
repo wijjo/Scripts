@@ -100,7 +100,7 @@ def _zip(runner):
         os.makedirs(runner.cmdargs.output)
     try:
         root_name = os.path.basename(rootdir)
-        zip_name = 'wip-%s-%s-%s.zip' % (root_name, branch_name, timestamp)
+        zip_name = 'wip-%s-%s-%s.zip' % (root_name, branch_name, timestamp).replace('/', '_')
         zip_path = os.path.realpath(os.path.join(runner.cmdargs.output, zip_name))
         file_paths = []
         for change in git.iter_changes():
@@ -228,6 +228,17 @@ def _review(runner):
 #===============================================================================
 def _url(runner):
     print git.get_repository_url()
+
+
+#===============================================================================
+@cli.Command(
+    name='quick_status',
+    description='Display quick status, e.g. for bash PS1 prompt.',
+)
+#===============================================================================
+def _quick_status(runner):
+    root = git.find_branch_root()
+
 
 #===============================================================================
 if __name__ == '__main__':
