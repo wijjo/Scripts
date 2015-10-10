@@ -158,16 +158,6 @@ class Runner(object):
 
 #===============================================================================
 
-def check_default_output_directory():
-    if not os.path.isdir(G.default_output_dir):
-        if os.path.exists(G.default_output_dir):
-            logger.abort('"%s" exists and is not a directory' % G.default_output_dir)
-        logger.info('Creating %s...' % G.default_output_dir)
-        os.mkdir(G.default_output_dir)
-
-
-#===============================================================================
-
 class ArchiveItem(object):
 
     def __init__(self, path,
@@ -179,7 +169,6 @@ class ArchiveItem(object):
                  ignorevcs=False,
                  noprogress=False,
                  outputdir=None):
-        check_default_output_directory()
         self.path        = path
         self.dryrun      = dryrun
         self.pause       = pause
@@ -193,6 +182,17 @@ class ArchiveItem(object):
         self.archive     = os.path.join(self.outputdir, self.name)
         self.compression = None
         self.noprogress  = noprogress
+        self.check_output_directory()
+
+    def check_output_directory(self):
+        if not os.path.isdir(self.outputdir):
+            if os.path.exists(self.outputdir):
+                logger.abort('"%s" exists and is not a directory' % self.outputdir)
+            logger.info('Creating %s...' % self.outputdir)
+            try:
+                os.mkdir(self.outputdir)
+            except (IOError, OSError), e:
+                logger.abort('Unable to create output directory', self.outputdir, e)
 
 
 #===============================================================================
