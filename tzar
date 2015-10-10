@@ -192,6 +192,7 @@ class ArchiveItem(object):
         self.name        = '%s-%s' % (self.path.replace('/', '_'), self.timestamp)
         self.archive     = os.path.join(self.outputdir, self.name)
         self.compression = None
+        self.noprogress  = noprogress
 
 
 #===============================================================================

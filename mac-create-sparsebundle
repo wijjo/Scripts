@@ -1,0 +1,69 @@
+#!/usr/bin/env python
+
+import sys
+import os
+from getpass import getpass
+from subprocess import Popen, PIPE
+
+SCRIPT = os.path.basename(sys.argv[0])
+
+def usage():
+    print '''
+Usage %(SCRIPT)s NAME SIZE BANDSIZE [ENCRYPTION]
+
+    NAME        volume name
+    SIZE        hdiutil-compatible size, e.g. 100g
+    BANDSIZE    band size in MB, e.g. 128 (Apple default is 8)
+    ENCRYPTION  encryption bits: 128, 256 or empty for no encryption
+
+    Prompts for a password if encryption is specified. Use 128 MB band size to
+    improve Airport Extreme Time Capsule network throughput with small files.
+''' % globals()
+    sys.exit(255)
+
+def get_password():
+    while True:
+        pw1 = getpass('Password: ')
+        pw2 = getpass('   Again: ')
+        if pw2 == pw1:
+            return pw1
+        print 'Passwords do not match.'
+
+def main(name_arg, size_arg, band_size_arg, ebits_arg=None):
+    ebits = None
+    if ebits_arg:
+        try:
+            ebits = int(ebits_arg)
+        except ValueError:
+            ebits = -1
+        if ebits != 128 and ebits != 256:
+            usage()
+    try:
+        band_size = int(band_size_arg)
+    except ValueError:
+        usage()
+    cmd_args = [
+        'hdiutil', 'create',
+        '-layout', 'GPTSPUD',
+        '-size', size_arg,
+        '-type', 'SPARSEBUNDLE',
+        '-nospotlight',
+        '-volname', name_arg,
+        '-fs', 'Journaled HFS+',
+        '-imagekey', 'sparse-band-size=%d' % (band_size * 2048),
+    ]
+    kwargs = dict(bufsize=0)
+    if ebits:
+        cmd_args.extend(['-encryption', 'AES-%d' % ebits, '-stdinpass'])
+        kwargs['stdin'] = PIPE
+        password = get_password()
+    else:
+        password = None
+    cmd_args.append('%s.sparsebundle' % name_arg)
+    p = Popen(cmd_args, **kwargs)
+    p.communicate(password)
+
+if __name__ == '__main__':
+    if len(sys.argv) < 3:
+        usage()
+    main(*sys.argv[1:5])

@@ -75,7 +75,7 @@ Commands, options and arguments:
 class RsyncOptions:
     leading  = []
     trailing = [
-        '--verbose',
+        '--progress',
         '--times',
         '--links',
         '--recursive',

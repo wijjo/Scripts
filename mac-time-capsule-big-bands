@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+if [ -z "$1" ]; then
+    echo "Usage $(basename ${BASH_SOURCE[0]}) SPARSEBUNDLE"
+    exit 255
+fi
+echo "Disabling Time Machine..."
+sudo tmutil disable || exit $?
+declare SB_BASE=$(basename "$1" .sparsebundle)
+declare SB_TMP="$SB_BASE-bigbands.sparsebundle"
+declare SB_ORIG="$SB_BASE-orig.sparsebundle"
+echo "Converting $1 to 128MB bands..."
+hdiutil convert "$1" -format UDSB -tgtimagekey sparse-band-size=262144 -o "$SB_TMP" || exit $?
+echo "Replacing $1 and preparing for Time Machine..."
+cp -vi "$1"/com.* "$SB_TMP"/ || exit $?
+mv -vi "$1" "$SB_ORIG" || exit $?
+mv -vi "$SB_TMP" "$1" || exit $?
+echo "$1 is ready. $SB_ORIG can be deleted."
