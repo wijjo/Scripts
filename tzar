@@ -25,90 +25,98 @@ import python_misc.run as run
 import python_misc.utility as utility
 
 
-#===============================================================================
+#=== Non-configurable globals ==================================================
 
-class G:
+PROGRAM_DIR, PROGRAM_NAME = os.path.split(os.path.realpath(sys.argv[0]))
 
-    program_dir, program_name = os.path.split(os.path.realpath(sys.argv[0]))
+RC_NAME = '.%(PROGRAM_NAME)src' % globals()
 
-    default_output_dir = '.%s' % program_name
+# The platforms where "cp" doesn't support -a
+#TODO: Add others (e.g. bsd?), even better - switch to shutil.
+SIMPLE_CP_PLATFORMS = ['darwin']
 
-    # Filespecs for --ignoreobj option exclusions
-    exclude_obj_glob = (
-        '*.o',
-        '*.so',
-        '*.so.*',
-        '*.co',
-        '*.pyc',
-        '*.pyd',
-        '*.Plo',
-        '*.la',
-        '*.lai',
-        '*.lo',
-        '*.a',
-        '*.dll',
-        '*.DLL',
-        '*.exe',
-        '*.EXE',
-        '*.lib',
-        '*.LIB',
-        '*.dylib',
-        '*.jnilib',
-        '*.jar',
-        '*.deb',
-        '*.rpm',
-        '*.zip',
-        '*.ZIP',
-        '*.gz',
-        '*.tgz',
-        '*.bz2',
-        '*.xz',
-        '*.sym',
-        '*.bin',
-        '*/.*',
-        '*/tags',
-    )
-    # Subdirectories ignored for --ignorevcs option
-    exclude_vcs_dirs = (
-        '.svn',
-        '.cvs',
-        '.git',
-    )
-    archive_name_glob = '"%s"-[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]*'
+# Display progress with "pv", if available.
+PV_AVAILABLE = utility.find_executable('pv')
 
-    tarball_trailer_re = re.compile('^[.]%s/(.*)-([0-9]+-[0-9]+)([.]tar)?[.](gz|bz2)$'
-                                        % program_name)
-    number_with_default_re = re.compile('^[0-9]*$')
+ARCHIVE_NAME_GLOB = '"%s"-[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]*'
 
-    # The platforms where "cp" doesn't support -a
-    #TODO: Add others (e.g. bsd?), even better - switch to shutil.
-    simple_cp_platforms = ['darwin']
+TARBALL_TRAILER_RE = re.compile('^[.]%s/(.*)-([0-9]+-[0-9]+)([.]tar)?[.](gz|bz2)$'
+                                    % PROGRAM_NAME)
 
-    if sys.platform in simple_cp_platforms:
-        cpcmd = 'cp -Rpv'
-    else:
-        cpcmd = 'cp -av'
+NUMBER_WITH_DEFAULT_RE = re.compile('^[0-9]*$')
 
-    # Display progress with "pv", if available.
-    pv_available = utility.find_executable('pv')
+# Default for the overrideable output directory name.
+DEFAULT_OUTPUT_DIRECTORY = '.%s' % PROGRAM_NAME
 
-    # Use "pigz" for gzip compression, if available.
-    gzip_replacement = utility.find_executable('pigzx')
+# Filespecs for --ignore-obj option exclusions.
+DEFAULT_BINARY_PATTERNS = [
+    '*.o',
+    '*.so',
+    '*.so.*',
+    '*.co',
+    '*.pyc',
+    '*.pyd',
+    '*.Plo',
+    '*.la',
+    '*.lai',
+    '*.lo',
+    '*.a',
+    '*.dll',
+    '*.DLL',
+    '*.exe',
+    '*.EXE',
+    '*.lib',
+    '*.LIB',
+    '*.dylib',
+    '*.jnilib',
+    '*.jar',
+    '*.deb',
+    '*.rpm',
+    '*.zip',
+    '*.ZIP',
+    '*.gz',
+    '*.tgz',
+    '*.bz2',
+    '*.xz',
+    '*.sym',
+    '*.bin',
+    '*/tags',
+]
 
-    # Use "pbzip2" or "lbzip2" for bzip2 compression, if available.
-    bzip2_replacement = None
-    for replacement_name in ['pbzip2', 'lbzip2']:
-        bzip2_replacement = utility.find_executable(replacement_name)
-        if bzip2_replacement:
-            break
+# Subdirectories ignored for --ignore-vcs option.
+DEFAULT_VCS_DIRECTORIES = [
+    '.svn',
+    '.cvs',
+    '.git',
+]
 
-    # Common command line options and arguments for archiving
-    archive_args = [
+DEFAULT_EXCLUDE_OTHER_PATTERNS = []
+
+DEFAULT_EXCLUDE_BINARIES = False
+
+DEFAULT_EXCLUDE_VCS = False
+
+# Platform-specific copy command.
+DEFAULT_COPY_COMMAND = 'cp -Rpv' if sys.platform in SIMPLE_CP_PLATFORMS else 'cp -av'
+
+# Use "pigz" for gzip compression, if available.
+DEFAULT_REPLACEMENT_GZIP = utility.find_executable('pigzx')
+
+# Use "pbzip2" or "lbzip2" for bzip2 compression, if available.
+DEFAULT_REPLACEMENT_BZIP2 = None
+for replacement_name in ['pbzip2', 'lbzip2']:
+    DEFAULT_REPLACEMENT_BZIP2 = utility.find_executable(replacement_name)
+    if DEFAULT_REPLACEMENT_BZIP2:
+        break
+
+# Common command line options and arguments for archiving
+def get_archive_cli_args():
+    return [
         cli.Boolean('delete', 'delete files after archiving',
                    '-d', '--delete', default=False),
-        cli.Boolean('ignoreobj', 'ignore %s' % ' '.join(exclude_obj_glob),
+        cli.Boolean('ignoreobj', 'ignore %s' % ' '.join(CONFIG.BINARY_PATTERNS),
                    '--ignore-obj', default=False),
-        cli.Boolean('ignorevcs', 'ignore %s subdirectories' % ' '.join(exclude_vcs_dirs),
+        cli.Boolean('ignorevcs', 'ignore %s subdirectories' % ' '.join(CONFIG.VCS_DIRECTORIES),
                    '--ignore-vcs', default=False),
         cli.Boolean('noprogress', 'disable progress meter',
                    '--no-progress', default=False),
@@ -118,9 +126,44 @@ class G:
     ]
 
 
+#=== Configuration dictionary with pseudo-attributes ===========================
+
+class ConfigDict(dict):
+
+    def __init__(self, **kwargs):
+        dict.__init__(self, **kwargs)
+
+    def __getattr__(self, name):
+        return self.get(name, None)
+
+CONFIG = ConfigDict(
+    BINARY_PATTERNS=DEFAULT_BINARY_PATTERNS,
+    COPY_COMMAND=DEFAULT_COPY_COMMAND,
+    EXCLUDE_BINARIES=DEFAULT_EXCLUDE_BINARIES,
+    EXCLUDE_OTHER_PATTERNS=DEFAULT_EXCLUDE_OTHER_PATTERNS,
+    EXCLUDE_VCS=DEFAULT_EXCLUDE_VCS,
+    OUTPUT_DIRECTORY='.%s' % PROGRAM_NAME,
+    REPLACEMENT_GZIP=DEFAULT_REPLACEMENT_GZIP,
+    REPLACEMENT_BZIP2=DEFAULT_REPLACEMENT_BZIP2,
+    VCS_DIRECTORIES=DEFAULT_VCS_DIRECTORIES,
+)
+
+CONFIG_HELP = dict(
+    BINARY_PATTERNS='Binary file wildcard patterns that are optionally ignored.',
+    COPY_COMMAND='Command used for file copy operations.',
+    EXCLUDE_BINARIES='Exclude binary files if True.',
+    EXCLUDE_OTHER_PATTERNS='Wildcard patterns for other excluded files.',
+    EXCLUDE_VCS='Exclude VCS directories if True.',
+    OUTPUT_DIRECTORY='Output subdirectory name.',
+    REPLACEMENT_GZIP='Compatible gzip replacement. By default pigzx is used when available.',
+    REPLACEMENT_BZIP2='Compatible bzip2 replacement. By default pbzip2 or lbzip2 are used when available.',
+    VCS_DIRECTORIES='VCS directory names that are optionally ignored.',
+)
+
+
 #===============================================================================
 
-def Q(*args):
+def quote_args(*args):
     return '"%s"' % ''.join([s.replace('"', '\\"') for s in args])
 
 
@@ -165,6 +208,7 @@ class ArchiveItem(object):
                  pause=False,
                  verbose=False,
                  delete=False,
+                 excludes=[],
                  ignoreobj=False,
                  ignorevcs=False,
                  noprogress=False,
@@ -174,15 +218,20 @@ class ArchiveItem(object):
         self.pause       = pause
         self.verbose     = verbose
         self.delete      = delete
+        self.excludes    = excludes
         self.ignoreobj   = ignoreobj
         self.ignorevcs   = ignorevcs
-        self.outputdir   = outputdir if outputdir else G.default_output_dir
+        self.outputdir   = outputdir if outputdir else CONFIG.OUTPUT_DIRECTORY
         self.timestamp   = get_timestamp()
         self.name        = '%s-%s' % (self.path.replace('/', '_'), self.timestamp)
         self.archive     = os.path.join(self.outputdir, self.name)
         self.compression = None
         self.noprogress  = noprogress
         self.check_output_directory()
+        if CONFIG.EXCLUDE_BINARIES:
+            self.ignoreobj = True
+        if CONFIG.EXCLUDE_VCS:
+            self.ignorevcs = True
 
     def check_output_directory(self):
         if not os.path.isdir(self.outputdir):
@@ -201,7 +250,7 @@ class ArchiveTarball(ArchiveItem):
 
     @staticmethod
     def forPath(path, **kwargs):
-        m = G.tarball_trailer_re.match(path)
+        m = TARBALL_TRAILER_RE.match(path)
         if m is None or m.group(3) != '.tar':
             return None
         if m.group(4) == 'bz2':
@@ -215,7 +264,7 @@ class ArchiveTarball(ArchiveItem):
         self.compression = compression
         if self.compression == 'bzip2':
             self.tar_compression_options = 'j'
-            self.external_compression_program = G.bzip2_replacement
+            self.external_compression_program = CONFIG.REPLACEMENT_BZIP2
             self.tar_extension = '.tar.bz2'
         elif self.compression == 'xz':
             if  'XZ_OPTS' in os.environ:
@@ -227,14 +276,15 @@ class ArchiveTarball(ArchiveItem):
             self.tar_extension = '.tar.xz'
         else:
             self.tar_compression_options = 'z'
-            self.external_compression_program = G.gzip_replacement
+            self.external_compression_program = CONFIG.REPLACEMENT_GZIP
             self.tar_extension = '.tar.gz'
-        if G.pv_available and not self.noprogress:
+        if PV_AVAILABLE and not self.noprogress:
             self.tar_create_options = ['-c%s' % self.tar_compression_options]
         else:
             self.tar_create_options = ['-cv%s' % self.tar_compression_options]
         if self.external_compression_program:
-            self.tar_create_options.extend(['--use-compress-program', self.external_compression_program])
+            self.tar_create_options.extend(['--use-compress-program',
+                                            self.external_compression_program])
         self.tar_create_options.append('-f')
         self.tar_restore_options = '-%s%s%s' % ('x', self.tar_compression_options, 'pf')
         self.tar_compare_options = '-%s%s%s' % ('d', self.tar_compression_options, 'f')
@@ -244,23 +294,33 @@ class ArchiveTarball(ArchiveItem):
         runner.append('tar')
         # Add object file exclusions?
         if self.ignoreobj:
-            for pat in G.exclude_obj_glob:
-                runner.add_args('--exclude', Q(pat))
+            for pat in CONFIG.BINARY_PATTERNS:
+                runner.add_args('--exclude', quote_args(pat))
         # Add VCS exclusions?
         if self.ignorevcs:
-            for pat in G.exclude_vcs_dirs:
-                runner.add_args('--exclude', Q('*/', pat, '/*'))
+            for pat in CONFIG.VCS_DIRECTORIES:
+                runner.add_args('--exclude', quote_args('*/', pat, '/*'))
+        # Add other exclusions?
+        for exclude in self.excludes:
+            runner.add_args('--exclude', quote_args(exclude))
         # Add tar options based on compression type
         runner.add_args(*self.tar_create_options)
         # Complete command line for running with or without pv
-        if G.pv_available and not self.noprogress:
-            runner.add_args('-', Q(self.path), '|', 'pv', '-rbt', '>', Q(self.archive, self.tar_extension))
-            runner.insert('echo', Q('Creating "', self.archive, self.tar_extension, '"...'))
+        if PV_AVAILABLE and not self.noprogress:
+            runner.add_args('-',
+                            quote_args(self.path),
+                            '|',
+                            'pv',
+                            '-rbt',
+                            '>',
+                            quote_args(self.archive, self.tar_extension))
+            runner.insert('echo',
+                          quote_args('Creating "', self.archive, self.tar_extension, '"...'))
         else:
-            runner.add_args(Q(self.archive, self.tar_extension), Q(self.path))
+            runner.add_args(quote_args(self.archive, self.tar_extension), quote_args(self.path))
         # Delete original when done?
         if self.delete:
-            runner.append('rm', '-rvf', Q(self.path))
+            runner.append('rm', '-rvf', quote_args(self.path))
         # Run command batch
         runner.run()
 
@@ -281,7 +341,7 @@ class ArchiveZip(ArchiveItem):
 
     @staticmethod
     def forPath(path, **kwargs):
-        m = G.tarball_trailer_re.match(path)
+        m = TARBALL_TRAILER_RE.match(path)
         if m is None or m.group(3) != '.zip':
             return None
         return ArchiveZip(path, **kwargs)
@@ -292,18 +352,21 @@ class ArchiveZip(ArchiveItem):
     def create(self):
         runner = Runner(dryrun=self.dryrun)
         runner.append('zip', '-r', '--symlinks')
-        runner.add_args(Q(self.archive, '.zip'), Q(self.path))
+        runner.add_args(quote_args(self.archive, '.zip'), quote_args(self.path))
         # Add object file exclusions?
         if self.ignoreobj:
-            for pat in G.exclude_obj_glob:
-                runner.add_args('--exclude', Q(pat))
+            for pat in CONFIG.BINARY_PATTERNS:
+                runner.add_args('--exclude', quote_args(pat))
         # Add VCS exclusions?
         if self.ignorevcs:
-            for pat in G.exclude_vcs_dirs:
-                runner.add_args('--exclude', Q('*/', pat, '/*'))
+            for pat in CONFIG.VCS_DIRECTORIES:
+                runner.add_args('--exclude', quote_args('*/', pat, '/*'))
+        # Add other exclusions?
+        for exclude in self.excludes:
+            runner.add_args('--exclude', quote_args(exclude))
         # Delete original when done?
         if self.delete:
-            runner.append('rm', '-rvf', Q(self.path))
+            runner.append('rm', '-rvf', quote_args(self.path))
         # Run command batch
         runner.run()
 
@@ -320,7 +383,7 @@ class ArchiveP7Zip(ArchiveItem):
 
     @staticmethod
     def forPath(path, **kwargs):
-        m = G.tarball_trailer_re.match(path)
+        m = TARBALL_TRAILER_RE.match(path)
         if m is None or m.group(3) != '.7z':
             return None
         return ArchiveP7Zip(path, **kwargs)
@@ -333,16 +396,16 @@ class ArchiveP7Zip(ArchiveItem):
         runner.append('7z', 'a')
         # Add object file exclusions?
         if self.ignoreobj:
-            for pat in G.exclude_obj_glob:
-                runner.add_args(Q('-xr!', pat))
+            for pat in CONFIG.BINARY_PATTERNS:
+                runner.add_args(quote_args('-xr!', pat))
         # Add VCS exclusions?
         if self.ignorevcs:
-            for pat in G.exclude_vcs_dirs:
-                runner.add_args(Q('-xr!', pat, '/*'))
-        runner.add_args(Q(self.archive, '.7z'), Q(self.path))
+            for pat in CONFIG.VCS_DIRECTORIES:
+                runner.add_args(quote_args('-xr!', pat, '/*'))
+        runner.add_args(quote_args(self.archive, '.7z'), quote_args(self.path))
         # Delete original when done?
         if self.delete:
-            runner.append('rm', '-rvf', Q(self.path))
+            runner.append('rm', '-rvf', quote_args(self.path))
         # Run command batch
         runner.run()
 
@@ -359,7 +422,7 @@ class ArchiveCompressedFile(ArchiveItem):
 
     @staticmethod
     def forPath(path, **kwargs):
-        m = G.tarball_trailer_re.match(path)
+        m = TARBALL_TRAILER_RE.match(path)
         ext = os.path.splitext(path)[1]
         if m is not None:
             return None
@@ -379,11 +442,11 @@ class ArchiveCompressedFile(ArchiveItem):
         runner = Runner(dryrun=self.dryrun)
         # Move or copy the file to the archive subdirectory
         if self.delete:
-            runner.append('mv', '-v', Q(self.path), Q(self.archive))
+            runner.append('mv', '-v', quote_args(self.path), quote_args(self.archive))
         else:
-            runner.append(G.cpcmd, Q(self.path), Q(self.archive))
+            runner.append(CONFIG.COPY_COMMAND, quote_args(self.path), quote_args(self.archive))
         # Then compress it
-        runner.append(self.compression, Q(self.archive))
+        runner.append(self.compression, quote_args(self.archive))
         # Run command batch
         runner.run()
 
@@ -410,15 +473,15 @@ class ArchiveDirectory(ArchiveItem):
     def create(self):
         runner = Runner(dryrun=self.dryrun)
         if self.delete:
-            runner.append('mv', '-v', Q(self.path), Q(self.archive))
+            runner.append('mv', '-v', quote_args(self.path), quote_args(self.archive))
         else:
-            runner.append(G.cpcmd, Q(self.path), Q(self.archive))
+            runner.append(CONFIG.COPY_COMMAND, quote_args(self.path), quote_args(self.archive))
         runner.run()
 
     def restore(self):
         target = utility.get_versioned_path(self.path)
         runner = Runner(dryrun=self.dryrun)
-        runner.append(G.cpcmd, Q(self.path), Q(target))
+        runner.append(CONFIG.COPY_COMMAND, quote_args(self.path), quote_args(target))
         logger.info('Restoring to "%s"...' % target)
         runner.run()
 
@@ -429,7 +492,7 @@ class ArchiveFile(ArchiveItem):
 
     @staticmethod
     def forPath(path, **kwargs):
-        m = G.tarball_trailer_re.match(path)
+        m = TARBALL_TRAILER_RE.match(path)
         if m is not None or os.path.isdir(path):
             return None
         return ArchiveFile(path, **kwargs)
@@ -440,15 +503,15 @@ class ArchiveFile(ArchiveItem):
     def create(self):
         runner = Runner(dryrun=self.dryrun)
         if self.delete:
-            runner.append('mv', '-v', Q(self.path), Q(self.archive))
+            runner.append('mv', '-v', quote_args(self.path), quote_args(self.archive))
         else:
-            runner.append(G.cpcmd, Q(self.path), Q(self.archive))
+            runner.append(CONFIG.COPY_COMMAND, quote_args(self.path), quote_args(self.archive))
         runner.run()
 
     def restore(self, path):
         target = utility.get_versioned_path(self.path)
         runner = Runner(dryrun=self.dryrun)
-        runner.append(G.cpcmd, Q(self.path), Q(target))
+        runner.append(CONFIG.COPY_COMMAND, quote_args(self.path), quote_args(target))
         logger.info('Restoring to "%s"...' % target)
         runner.run()
 
@@ -476,11 +539,11 @@ class FMFactory(object):
 
 def choose(name, **kwargs):
 
-    if not os.path.isdir(G.default_output_dir):
-        logger.abort('No %s directory exists' % G.default_output_dir)
+    if not os.path.isdir(CONFIG.OUTPUT_DIRECTORY):
+        logger.abort('No %s directory exists' % CONFIG.OUTPUT_DIRECTORY)
     if name[-1] == '/':
         name = name[:-1]
-    pat = os.path.join(G.default_output_dir, G.archive_name_glob % name)
+    pat = os.path.join(CONFIG.OUTPUT_DIRECTORY, ARCHIVE_NAME_GLOB % name)
     archives = []
     for a in os.popen('ls %s' % pat):
         archives.insert(0, a.strip())
@@ -492,7 +555,7 @@ def choose(name, **kwargs):
     logger.info('')
     path = None
     while path is None:
-        i = int(utility.prompt_re('Select archive (1-n [none])', G.number_with_default_re, '0'))
+        i = int(utility.prompt_re('Select archive (1-n [none])', NUMBER_WITH_DEFAULT_RE, '0'))
         if i <= 0:
             logger.abort('Canceled')
         if i-1 < len(archives):
@@ -526,10 +589,11 @@ def cmdargs_to_kwargs(cmdargs):
 @cli.Command(
     name='put',
     description='Archive using a straight copy.',
-    args=G.archive_args
+    args=get_archive_cli_args()
 )
 #===============================================================================
 def _put(runner):
+    read_configs()
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
             fm = FMFactory.forPath(path, **cmdargs_to_kwargs(runner.cmdargs))
@@ -540,10 +604,11 @@ def _put(runner):
 @cli.Command(
     name='gz',
     description='Archive with gzip compression.',
-    args=G.archive_args
+    args=get_archive_cli_args()
 )
 #===============================================================================
 def _gzip(runner):
+    read_configs()
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
             fm = ArchiveTarball(path, "gzip", **cmdargs_to_kwargs(runner.cmdargs))
@@ -554,10 +619,11 @@ def _gzip(runner):
 @cli.Command(
     name='bz2',
     description='Archive with bzip2 compression.',
-    args=G.archive_args
+    args=get_archive_cli_args()
 )
 #===============================================================================
 def _bzip2(runner):
+    read_configs()
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
             fm = ArchiveTarball(path, "bzip2", **cmdargs_to_kwargs(runner.cmdargs))
@@ -568,10 +634,11 @@ def _bzip2(runner):
 @cli.Command(
     name='xz',
     description='Archive with xz compression.',
-    args=G.archive_args
+    args=get_archive_cli_args()
 )
 #===============================================================================
 def _xz(runner):
+    read_configs()
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
             fm = ArchiveTarball(path, "xz", **cmdargs_to_kwargs(runner.cmdargs))
@@ -582,10 +649,11 @@ def _xz(runner):
 @cli.Command(
     name='zip',
     description='Archive with zip compression.',
-    args=G.archive_args
+    args=get_archive_cli_args()
 )
 #===============================================================================
 def _zip(runner):
+    read_configs()
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
             fm = ArchiveZip(path, **cmdargs_to_kwargs(runner.cmdargs))
@@ -596,10 +664,11 @@ def _zip(runner):
 @cli.Command(
     name='7z',
     description='Archive with p7zip compression.',
-    args=G.archive_args
+    args=get_archive_cli_args()
 )
 #===============================================================================
 def _p7zip(runner):
+    read_configs()
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
             fm = ArchiveP7Zip(path, **cmdargs_to_kwargs(runner.cmdargs))
@@ -616,6 +685,7 @@ def _p7zip(runner):
 )
 #===============================================================================
 def _get(runner):
+    read_configs()
     for name in files:
         (path, fm) = choose(name, **cmdargs_to_kwargs(runner.cmdargs))
         fm.restore(path)
@@ -631,9 +701,72 @@ def _get(runner):
 )
 #===============================================================================
 def _compare(runner):
+    read_configs()
     for name in files:
         (path, fm) = choose(name, **cmdargs_to_kwargs(runner.cmdargs))
         fm.compare(path)
+
+
+#===============================================================================
+@cli.Command(
+    name='generate-rc',
+    description='Generate sample RC file to working directory.',
+)
+#===============================================================================
+def _generate_rc(runner):
+    try:
+        if os.path.exists(RC_NAME):
+            logger.abort('RC file already exists: %(RC_NAME)s' % globals())
+        with open(RC_NAME, 'w') as f:
+            f.write('''\
+# Un-comment and edit below to change defaults.
+# Note that it uses Python syntax, e.g. for strings, lists, assignments and comments.
+''')
+            for key in sorted(CONFIG.keys()):
+                f.write('\n')
+                if key in CONFIG_HELP:
+                    f.write('# %s\n' % CONFIG_HELP[key])
+                f.write('#%s\n' % name_value_dump_string(key, CONFIG[key]))
+        logger.info('RC file written: %(RC_NAME)s' % globals())
+    except (IOError, OSError), e:
+        logger.abort('Unable to save generated RC file: %(RC_NAME)s' % globals(), e)
+
+
+#===============================================================================
+def read_config(directory):
+#===============================================================================
+    path = os.path.expanduser(os.path.expandvars(os.path.join(directory, RC_NAME)))
+    if not os.path.isfile(path):
+        return
+    try:
+        logger.verbose_info('Reading configuration file: %(path)s' % locals())
+        execfile(path, dict(), CONFIG)
+    except Exception, e:
+        logger.abort('Error reading configuration file: %(path)s' % locals(), e)
+
+
+#===============================================================================
+def read_configs(*directories):
+#===============================================================================
+    for directory in ['~', '.'] + list(directories):
+        read_config(directory)
+    if logger.is_verbose():
+        dump_config()
+
+
+#===============================================================================
+def name_value_dump_string(name, value):
+#===============================================================================
+    quote = "'" if type(value) is str else ''
+    return '%(name)s = %(quote)s%(value)s%(quote)s' % locals()
+
+
+#===============================================================================
+def dump_config():
+#===============================================================================
+    logger.verbose_info('=== Configuration ===')
+    for key in sorted(CONFIG.keys()):
+        logger.verbose_info(name_value_dump_string(key, CONFIG[key]))
 
 
 #===============================================================================
