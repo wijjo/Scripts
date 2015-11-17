@@ -103,11 +103,7 @@ DEFAULT_COPY_COMMAND = 'cp -Rpv' if sys.platform in SIMPLE_CP_PLATFORMS else 'cp
 DEFAULT_REPLACEMENT_GZIP = utility.find_executable('pigzx')
 
 # Use "pbzip2" or "lbzip2" for bzip2 compression, if available.
-DEFAULT_REPLACEMENT_BZIP2 = None
-for replacement_name in ['pbzip2', 'lbzip2']:
-    DEFAULT_REPLACEMENT_BZIP2 = utility.find_executable(replacement_name)
-    if DEFAULT_REPLACEMENT_BZIP2:
-        break
+DEFAULT_REPLACEMENT_BZIP2 = utility.find_executable('pbzip2', 'lbzip2')
 
 # Common command line options and arguments for archiving
 def get_archive_cli_args():
