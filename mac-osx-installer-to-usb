@@ -20,8 +20,20 @@ def main():
     if not installer_app or not createinstallmedia:
         sys.stderr.write('OS X Installer not found.\n')
         sys.exit(1)
+
     cmd = 'sudo "%(createinstallmedia)s" --volume "%(usb_volume)s" --applicationpath "%(installer_app)s" --nointeraction' % locals()
-    print cmd
+    print '''
+    Installer: %(installer_app)s
+Media creator: %(createinstallmedia)s
+   USB Volume: %(usb_volume)s
+      Command: %(cmd)s
+''' % locals()
+    raw_input('Press Enter to continue or Ctrl-C to abort:')
+    os.system(cmd)
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print'\nABORT'
+        sys.exit(1)
