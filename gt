@@ -54,9 +54,9 @@ def _pending(runner):
     if runner.cmdargs.order not in ['n', 't']:
         logger.abort('Order must be "n" (natural) or "t" (time).',
                      'Natural ordering is the default')
-    rootdir = git.git_project_root()
-    savedir = os.getcwd()
-    os.chdir(rootdir)
+    root_dir = git.git_project_root()
+    save_dir = os.getcwd()
+    os.chdir(root_dir)
     try:
         if runner.cmdargs.order == 't':
             changes = git.get_changes_by_time()
@@ -76,62 +76,78 @@ def _pending(runner):
             else:
                 print path
     finally:
-        os.chdir(savedir)
+        os.chdir(save_dir)
 
 
 #===============================================================================
 @cli.Command(
-    name='zip',
-    description='Archive uncommitted changes.',
+    name='snapshot',
+    description='Archive uncommitted changes and capture a patch diff.',
     args=[
-        cli.Boolean('all', 'save all, including unmanaged files', '-a', '--all'),
+        cli.Boolean('all', 'include unmanaged files in archive', '-a', '--all'),
         cli.String('output', 'output directory', '-o', '--output', default='../WIP'),
     ],
 )
 #===============================================================================
-def _zip(runner):
-    rootdir = git.git_project_root()
-    branch_name = git.get_local_branch()
-    timestamp = time.strftime('%y%m%d%H%M%S')
-    savedir = os.getcwd()
-    os.chdir(rootdir)
-    if not os.path.isdir(runner.cmdargs.output):
-        logger.info('Creating output directory "%s"...' % runner.cmdargs.output)
-        os.makedirs(runner.cmdargs.output)
+def _snapshot(runner):
+
+    root_dir = git.git_project_root()
+    save_dir = os.getcwd()
+    os.chdir(root_dir)
+
+    root_name = os.path.basename(root_dir)
+    branch_name = git.get_local_branch().replace('/', '_')
+    timestamp = time.strftime('%y%m%d-%H%M%S')
+    output_name = '-'.join([timestamp, root_name, branch_name])
+    output_dir = os.path.join(runner.cmdargs.output, output_name)
+    zip_name = 'changed-and-new.zip' if runner.cmdargs.all else 'changed.zip'
+    zip_path = os.path.join(output_dir, zip_name)
+    zip_path_abs = os.path.realpath(zip_path)
+    diff_name = 'patch.diff'
+    diff_path = os.path.join(output_dir, diff_name)
+    diff_path_abs = os.path.realpath(diff_path)
+
+    logger.info('Base directory (Git project root):', [root_dir])
+    logger.info('Output directory:', [output_dir])
+
+    if not runner.cmdargs.dryrun:
+        os.makedirs(output_dir)
+
     try:
-        root_name = os.path.basename(rootdir)
-        zip_name = ('wip-%s-%s-%s.zip' % (root_name, branch_name, timestamp)).replace('/', '_')
-        zip_path = os.path.realpath(os.path.join(runner.cmdargs.output, zip_name))
+
         file_paths = []
+
+        logger.info('Archive: %s' % zip_name)
+
         for change in git.iter_changes():
             if change.flag.startswith('R'):
                 file_paths.append(change.path2)
-            elif change.flag != 'D' and change.path != zip_path:
+            elif change.flag != 'D' and change.path != zip_path_abs:
                 if runner.cmdargs.all or change.flag != '??':
                     if runner.cmdargs.dryrun:
                         sys.stdout.write('+%s\n' % change.path)
                     file_paths.append(change.path)
+
         if not file_paths:
-            sys.stdout.write('%s: Nothing to archive.\n' % root_name)
+            logger.info('Nothing to archive: %s' % root_name)
+
         if not runner.cmdargs.dryrun and file_paths:
-            sys.stdout.write('Saving archive file %s ...\n' % zip_path)
-            zip_file = zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED)
+            zip_file = zipfile.ZipFile(zip_path_abs, 'w', zipfile.ZIP_DEFLATED)
             for path in file_paths:
-                sys.stdout.write('+%s\n' % path)
+                if runner.cmdargs.verbose:
+                    sys.stdout.write('+%s\n' % path)
                 zip_file.write(path)
             zip_file.close()
+
+        logger.info('Patch diff: %s' % diff_name)
+
+        if not runner.cmdargs.dryrun:
+            with open(diff_path_abs, 'w') as diff_file:
+                for line in run.pipe_cmd('git', 'diff'):
+                    diff_file.write(line)
+
     finally:
-        os.chdir(savedir)
-
-
-#===============================================================================
-#@cli.Command(
-#    name='delete',
-#    description='Delete a branch (local and remote).',
-#)
-#===============================================================================
-#def _branch_delete(runner):
-#    abort("Branch delete has not been implemented yet.")
+        os.chdir(save_dir)
 
 
 #===============================================================================
