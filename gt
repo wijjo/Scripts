@@ -125,7 +125,7 @@ def _snapshot(runner):
             elif change.flag != 'D' and change.path != zip_path_abs:
                 if runner.cmdargs.all or change.flag != '??':
                     if runner.cmdargs.dryrun:
-                        sys.stdout.write('+%s\n' % change.path)
+                        sys.stdout.write('+%s%s' % (change.path, os.linesep))
                     file_paths.append(change.path)
 
         if not file_paths:
@@ -135,7 +135,7 @@ def _snapshot(runner):
             zip_file = zipfile.ZipFile(zip_path_abs, 'w', zipfile.ZIP_DEFLATED)
             for path in file_paths:
                 if runner.cmdargs.verbose:
-                    sys.stdout.write('+%s\n' % path)
+                    sys.stdout.write('+%s%s' % (path, os.linesep))
                 zip_file.write(path)
             zip_file.close()
 
@@ -145,6 +145,7 @@ def _snapshot(runner):
             with open(diff_path_abs, 'w') as diff_file:
                 for line in run.pipe_cmd('git', 'diff'):
                     diff_file.write(line)
+                    diff_file.write(os.linesep)
 
     finally:
         os.chdir(save_dir)
@@ -183,9 +184,9 @@ def _new(runner):
 def _branches(runner):
     info = git.get_info()
     for branch in git.iter_branches(user = info.user.name):
-        sys.stdout.write('%s\n' % branch)
+        sys.stdout.write('%s%s' % (branch, os.linesep))
         for commit in git.iter_unmerged_commits(branch):
-            sys.stdout.write('   %s %s\n' % (commit.identifier, commit.comment))
+            sys.stdout.write('   %s %s%s' % (commit.identifier, commit.comment, os.linesep))
 
 
 #===============================================================================
