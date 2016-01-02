@@ -3,4 +3,10 @@ if [ -z "$1" ]; then
     echo "Usage: $(basename $0) FSROOT"
     exit 1
 fi
+if [ ! $(type -P sfill) ]; then
+    echo "\
+sfill is not in PATH
+    sudo apt-get install secure-delete" 1>&2
+    exit 1
+fi
 sudo sfill -f -v -ll -z $1
