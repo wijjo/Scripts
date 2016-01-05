@@ -21,7 +21,7 @@ class G:
 #===============================================================================
 def main():
 #===============================================================================
-    parser = cli.Parser(
+    runner = cli.Parser(
         'Various commands for working in a Git environment.',
         cli.Boolean('dryrun', "perform dry run - display, but don't execute commands",
                     '-n', '--dry-run'),
@@ -30,51 +30,61 @@ def main():
         cli.Boolean('verbose', "enable verbose messages",
                     '-v', '--verbose')
     )
-    parser.parse()
-    logger.set_verbose(parser.cmdargs.verbose)
-    parser.run()
+    runner.parse()
+    logger.set_verbose(runner.cmdargs.verbose)
+    runner.run()
 
 
 #===============================================================================
 @cli.Command(
-    name='pending',
-    description='List uncommitted changes.',
+    name='status',
+    aliases=['st'],
+    description='Show pending changes and other status.',
     args=[
-        cli.String('format', 'format specification: l=long, s=short (default)',
-                   '-f', '--format', default='s'),
-        cli.String('order', 'order specification: t=time, n=name (default)',
-                   '-o', '--order', default='n'),
+        cli.Boolean('short', 'short report, i.e. just changed files', '-s', '--short'),
+        cli.Boolean('time', 'order by time instead of name', '-t', '--time'),
     ],
 )
 #===============================================================================
-def _pending(runner):
-    if runner.cmdargs.format not in ['l', 's']:
-        logger.abort('Format must be "s" (short) or "l" (long).',
-                     'Short format is the default')
-    if runner.cmdargs.order not in ['n', 't']:
-        logger.abort('Order must be "n" (natural) or "t" (time).',
-                     'Natural ordering is the default')
+def _status(runner):
     root_dir = git.git_project_root()
     save_dir = os.getcwd()
     os.chdir(root_dir)
     try:
-        if runner.cmdargs.order == 't':
-            changes = git.get_changes_by_time()
-        else:
-            changes = git.get_changes()
-        for change in changes:
-            if change.path2:
-                path = change.path2
-            else:
-                path = change.path
-            if runner.cmdargs.format == 'l':
-                try:
-                    col1 = time.strftime('%x  %X', time.localtime(os.stat(path).st_mtime))
-                except OSError:
-                    col1 = '(deleted)'
-                print '%3s  %17s  %s' % (change.flag, col1, path)
-            else:
-                print path
+        def _display(submodule=None):
+            header_displayed = False
+            def _header():
+                url = git.get_repository_url()
+                local = git.get_local_branch()
+                tracking = git.get_tracking_branch()
+                if submodule:
+                    print 'Submodule: %s' % submodule
+                print '''\
+      URL: %(url)s
+   Branch: %(local)s
+   Tracks: %(local)s''' % locals()
+            if not submodule and not runner.cmdargs.short:
+                _header()
+                header_displayed = True
+            changes = git.get_changes_by_time() if runner.cmdargs.time else git.get_changes()
+            for change in changes:
+                path = change.path2 if change.path2 else change.path
+                if not runner.cmdargs.short and not header_displayed:
+                    _header()
+                    header_displayed = True
+                if runner.cmdargs.short:
+                    print path
+                else:
+                    try:
+                        col1 = time.strftime('%x  %X', time.localtime(os.stat(path).st_mtime))
+                    except OSError:
+                        col1 = '(deleted)'
+                    print '%3s  %17s  %s' % (change.flag, col1, path)
+        _display()
+        for submodule in git.iter_submodules():
+            os.chdir(submodule)
+            _display(submodule)
+            os.chdir(root_dir)
     finally:
         os.chdir(save_dir)
 
@@ -119,7 +129,7 @@ def _snapshot(runner):
 
         logger.info('Archive: %s' % zip_name)
 
-        for change in git.iter_changes():
+        for change in git.iter_changes(submodules=True):
             if change.flag.startswith('R'):
                 file_paths.append(change.path2)
             elif change.flag != 'D' and change.path != zip_path_abs:
@@ -245,16 +255,6 @@ def _review(runner):
 #===============================================================================
 def _url(runner):
     print git.get_repository_url()
-
-
-#===============================================================================
-@cli.Command(
-    name='quick_status',
-    description='Display quick status, e.g. for bash PS1 prompt.',
-)
-#===============================================================================
-def _quick_status(runner):
-    root = git.find_branch_root()
 
 
 #===============================================================================
