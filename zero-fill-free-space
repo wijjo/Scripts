@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+if [ -z "$(which sfill)" ]; then
+    echo "Please install sfill, e.g. using sudo apt-get install secure-delete"
+    exit 1
+fi
 if [ -z "$1" ]; then
     echo "Usage: $(basename $0) FSROOT"
     exit 1
