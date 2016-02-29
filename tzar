@@ -582,7 +582,7 @@ def cmdargs_to_kwargs(cmdargs):
 )
 #===============================================================================
 def _put(runner):
-    read_configs()
+    read_configs(runner)
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
             fm = FMFactory.forPath(path, **cmdargs_to_kwargs(runner.cmdargs))
@@ -597,7 +597,7 @@ def _put(runner):
 )
 #===============================================================================
 def _gzip(runner):
-    read_configs()
+    read_configs(runner)
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
             fm = ArchiveTarball(path, "gzip", **cmdargs_to_kwargs(runner.cmdargs))
@@ -612,7 +612,7 @@ def _gzip(runner):
 )
 #===============================================================================
 def _bzip2(runner):
-    read_configs()
+    read_configs(runner)
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
             fm = ArchiveTarball(path, "bzip2", **cmdargs_to_kwargs(runner.cmdargs))
@@ -627,7 +627,7 @@ def _bzip2(runner):
 )
 #===============================================================================
 def _xz(runner):
-    read_configs()
+    read_configs(runner)
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
             fm = ArchiveTarball(path, "xz", **cmdargs_to_kwargs(runner.cmdargs))
@@ -642,7 +642,7 @@ def _xz(runner):
 )
 #===============================================================================
 def _zip(runner):
-    read_configs()
+    read_configs(runner)
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
             fm = ArchiveZip(path, **cmdargs_to_kwargs(runner.cmdargs))
@@ -657,7 +657,7 @@ def _zip(runner):
 )
 #===============================================================================
 def _p7zip(runner):
-    read_configs()
+    read_configs(runner)
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
             fm = ArchiveP7Zip(path, **cmdargs_to_kwargs(runner.cmdargs))
@@ -674,7 +674,7 @@ def _p7zip(runner):
 )
 #===============================================================================
 def _get(runner):
-    read_configs()
+    read_configs(runner)
     for name in files:
         (path, fm) = choose(name, **cmdargs_to_kwargs(runner.cmdargs))
         fm.restore(path)
@@ -690,7 +690,7 @@ def _get(runner):
 )
 #===============================================================================
 def _compare(runner):
-    read_configs()
+    read_configs(runner)
     for name in files:
         (path, fm) = choose(name, **cmdargs_to_kwargs(runner.cmdargs))
         fm.compare(path)
@@ -707,18 +707,9 @@ def _generate_rc(runner):
 
 
 #===============================================================================
-def read_config(directory):
+def read_configs(runner, *directories):
 #===============================================================================
-    CONFIG.load('~', '.')
-
-
-#===============================================================================
-def read_configs(*directories):
-#===============================================================================
-    for directory in ['~', '.'] + list(directories):
-        read_config(directory)
-    if logger.is_verbose():
-        CONFIG.dump()
+    CONFIG.load_for_paths(runner.cmdargs.path, directories, '~', '.')
 
 
 #===============================================================================

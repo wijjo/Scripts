@@ -13,11 +13,6 @@ import python_misc.run as run
 import python_misc.utility as utility
 
 
-class G:
-    state_file_name = 'giv.current'
-    workspace_script = 'giv_workspace.sh'
-
-
 #===============================================================================
 def main():
 #===============================================================================
