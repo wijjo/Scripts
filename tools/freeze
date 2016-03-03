@@ -1,0 +1,7 @@
+#!/bin/bash
+
+set -e
+
+for PROG in "$@"; do
+    pyinstaller -p $PWD/ext/python_misc -F --specpath $PWD/spec $PROG
+done
