@@ -78,10 +78,10 @@ class Global:
     script_name = os.path.basename(sys.argv[0])
     script_dir = os.path.dirname(os.path.realpath(sys.argv[0]))
     lib_dir = os.path.join(script_dir, '%slib' % script_name)
-    default_configuration = os.path.join(lib_dir, '%src' % script_name)
     output_directory = ('.%s' % script_name)
     config_path = os.path.expanduser('~/.%src' % script_name)
     sys.path.insert(0, lib_dir)
+    from followlib.defaultrc import default_rc_text
 
 def _message(f, tag, *msgs):
     '''Low level message display.'''
@@ -208,7 +208,9 @@ def write_config_as_needed(rcgen):
             print 'Generating configuration file "%s"...' % Global.config_path
         else:
             print 'Saving initial configuration file "%s"...' % Global.config_path
-        shutil.copyfile(Global.default_configuration, Global.config_path)
+            with open(Global.config_path, 'w') as f:
+                f.write(Global.default_rc_text)
+                f.write('\n')
 
 def read_config(styles, colorizers):
     if json:
@@ -228,7 +230,7 @@ def read_config(styles, colorizers):
         # Older Python versions don't have json. Use the default configuration.
         # Patch up the default configuration to use with Python eval.
         # Obviously these straight substitutions are simplistic and error-prone.
-        config = default_configuration
+        config = Global.default_rc_text
         for (s1, s2) in (('true', 'True'), ('false', 'False'), ('null', 'None')):
             config = config.replace(s1, s2)
         doc = eval(config)

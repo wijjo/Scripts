@@ -1,3 +1,4 @@
+default_rc_text = r'''
 {
     "colorizers": [
         {
@@ -344,3 +345,4 @@
         }
     }
 }
+'''.strip()
