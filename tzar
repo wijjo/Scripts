@@ -3,11 +3,11 @@
 #===============================================================================
 # TZAR - simple archiving front end
 #
-# Supports multiple archivers, e.g. gzip, bzip2, zip, xz, and p7zip.
+# Supports multiple archivers, e.g. gzip, bzip2, zip, xz, lzip, and p7zip.
 # Minimizes command line options by optimizing for simple local archival
 # needs. E.g. there is no need to specify output file names. Uses pv for
 # progress display when available. Substitutes faster archivers like
-# pigz, lbzip2, and pbzip2 when available.
+# pigz, pxz, lbzip2, and pbzip2 when available.
 #===============================================================================
 #===============================================================================
 
@@ -95,6 +95,7 @@ CONFIG = Config('.%(PROGRAM_NAME)src' % globals(),
             '*.tgz',
             '*.bz2',
             '*.xz',
+            '*.lz',
             '*.sym',
             '*.bin',
             '*/tags',
@@ -135,6 +136,16 @@ CONFIG = Config('.%(PROGRAM_NAME)src' % globals(),
         'REPLACEMENT_BZIP2',
         utility.find_executable('pbzip2', 'lbzip2'),
         'Compatible bzip2 replacement. By default pbzip2 or lbzip2 are used when available.'
+    ),
+    ConfigSpec(
+        'REPLACEMENT_XZ',
+        utility.find_executable('pxz', 'pixz'),
+        'Compatible xz replacement. By default pxz or pixz are used when available.'
+    ),
+    ConfigSpec(
+        'REPLACEMENT_LZIP',
+        utility.find_executable('plzip'),
+        'Compatible lzip replacement. By default plzip is used when available.'
     ),
     ConfigSpec(
         'VCS_DIRECTORIES',
@@ -241,6 +252,8 @@ class ArchiveTarball(ArchiveItem):
             return ArchiveTarball(path, 'bzip2', **kwargs)
         if m.group(4) == 'xz':
             return ArchiveTarball(path, 'xz', **kwargs)
+        if m.group(4) == 'lz':
+            return ArchiveTarball(path, 'lzip', **kwargs)
         return ArchiveTarball(path, 'gzip', **kwargs)
 
     def __init__(self, path, compression, **kwargs):
@@ -256,8 +269,16 @@ class ArchiveTarball(ArchiveItem):
             else:
                 os.environ['XZ_OPTS'] = '--threads=0'
             self.tar_compression_options = 'J'
-            self.external_compression_program = None
+            self.external_compression_program = CONFIG.data.REPLACEMENT_XZ
             self.tar_extension = '.tar.xz'
+        elif self.compression == 'lzip':
+            if  'LZ_OPTS' in os.environ:
+                os.environ['LZ_OPTS'] = '%s --threads=0' % os.environ['LZ_OPTS']
+            else:
+                os.environ['LZ_OPTS'] = '--threads=0'
+            self.tar_compression_options = None
+            self.external_compression_program = CONFIG.data.REPLACEMENT_LZIP
+            self.tar_extension = '.tar.lz'
         else:
             self.tar_compression_options = 'z'
             self.external_compression_program = CONFIG.data.REPLACEMENT_GZIP
@@ -421,6 +442,8 @@ class ArchiveCompressedFile(ArchiveItem):
             return ArchiveCompressedFile(path, 'bzip2', **kwargs)
         if ext == '.xz':
             return ArchiveCompressedFile(path, 'xz', **kwargs)
+        if ext == '.lz':
+            return ArchiveCompressedFile(path, 'lzip', **kwargs)
         return None
 
     def __init__(self, compression, **kwargs):
@@ -631,6 +654,21 @@ def _xz(runner):
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
             fm = ArchiveTarball(path, "xz", **cmdargs_to_kwargs(runner.cmdargs))
+            fm.create()
+
+
+#===============================================================================
+@cli.Command(
+    name='lz',
+    description='Archive with lzip compression.',
+    args=get_archive_cli_args()
+)
+#===============================================================================
+def _lz(runner):
+    read_configs(runner)
+    for path_pat in runner.cmdargs.path:
+        for path in glob(path_pat):
+            fm = ArchiveTarball(path, "lzip", **cmdargs_to_kwargs(runner.cmdargs))
             fm.create()
 
 
