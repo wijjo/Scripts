@@ -12,18 +12,13 @@ import optparse
 class Runtime:
     (directory, program) = os.path.split(os.path.realpath(sys.argv[0]))
     base_directory = os.path.dirname(directory)
-    config = os.path.expanduser('~/.{0}rc'.format(program))
+    etc_config_rel_path = os.path.join('etc', '{0}'.format(program))
+    dot_config_file_name = '.{0}rc'.format(program)
 
-# Add the program directory to support sclib in a subfolder.
-if os.path.exists(os.path.join(Runtime.directory)):
-    if Runtime.directory not in sys.path:
-        sys.path.append(Runtime.directory)
-# Add python_misc if it's under the parent folder.
-python_misc = os.path.join(Runtime.base_directory, 'python_misc')
-if os.path.exists(python_misc):
-    if python_misc not in sys.path:
-        sys.path.append(python_misc)
-from python_misc import configmapper, console, listutil
+from lib import import_python_misc
+from python_misc import configmapper
+from python_misc import console
+from python_misc import listutil
 
 class Option:
     def __init__(self, letter, word, dest, help):
@@ -54,21 +49,25 @@ class Integer(Option):
                           help=self.help)
 
 class CommandLine:
-    commands = ['dump', 'help', 'list', 'pull', 'push', 'setup']
+    commands = ['config', 'dump', 'help', 'list', 'pull', 'push']
     options  = [
-        Boolean('-k', '--keep'     , 'keep'   , "keep target files deleted from source (push/pull)"),
-        Boolean('-n', '--dry-run'  , 'pretend', 'perform dry run only (push/pull)'),
-        Boolean('-s', '--show-only', 'show'   , 'show rsync commands without executing (push/pull)'),
-        Boolean('-v', '--verbose'  , 'verbose', 'display verbose messages'),
+        Boolean('-k', '--keep-deleted', 'keep_deleted',
+                'keep target files that were deleted from source (push/pull)'),
+        Boolean('-n', '--dry-run', 'dry_run',
+                'perform dry run only (push/pull)'),
+        Boolean('-S', '--show-commands', 'show_commands',
+                'show rsync commands without executing (push/pull)'),
+        Boolean('-v', '--verbose', 'verbose',
+                'display verbose messages'),
     ]
     USAGE = '''%prog [OPTIONS] COMMAND [COMMAND_OPTS] [COMMAND_ARGS]
 
 Commands, options and arguments:
 
-  pull [-k|-n|-s] [NAME ...]  pull from remote to local
-  push [-k|-n|-s] [NAME ...]  push from local to remote
+  pull [-k|-n|-S] [NAME ...]  pull from remote to local
+  push [-k|-n|-S] [NAME ...]  push from local to remote
   list                        list sync configuration names
-  setup                       create new configuration file
+  config DIRECTORY            create new configuration file in DIRECTORY, e.g. '.'
   dump                        display configuration dump
   help                        display help'''
 
@@ -86,8 +85,8 @@ class RsyncOptions:
 
 # Entry tag names
 class Tags:
-    INCLUDE   = configmapper.Config.include_entry
-    REFERENCE = 'syncs'
+    SECTIONS  = configmapper.Config.include_entry
+    SYNCS     = 'syncs'
     INCLUDES  = 'includes'
     EXCLUDES  = 'excludes'
     LOCAL     = 'local'
@@ -98,22 +97,31 @@ class Tags:
     METHOD    = 'method'
     FUZZ      = 'fuzz'
     lists     = [INCLUDES, EXCLUDES]
-    keywords  = [REFERENCE]
+    keywords  = [SYNCS]
     numbers   = [PORT]
     required  = [LOCAL, REMOTE]
 
 class Template:
     text = '''\
 # {program} configuration format:
-# - Multiple synchronization sections are allowed.
-# - A {remote} entry is an absolute remote path.
-# - A {local} entry is a relative or absolute local path.
-# - A {reference} entry invokes other named synchronization sections.
-# - A {include} entry incorporates settings from other sections.
-# - Top directory {excludes} entry must start with /, not */
-[sync1]
-{remote} = /path/to/remote/directory
-{local} = /path/to/local/directory
+#
+# Each section stanza starts with [SECTION_NAME], where SECTION_NAME
+# identifies a synchronization configuration.
+#
+# Multiple synchronization sections are allowed.
+#   {remote}    : (required) absolute remote path
+#   {local}     : (required) relative or absolute local path
+#   {host}      : (optional) SSH host name or IP (default=localhost)
+#   {user}      : (optional) SSH user name (default={username})
+#   {port}      : (optional) SSH port for remote host (default=22)
+#   {includes}  : (optional) glob patterns to include
+#   {excludes}  : (optional) glob patterns to exclude (top=/..., not */...)
+#   {syncs}     : (optional) other section(s) to invoke
+#   {sections}  : (optional) other section(s) included for settings
+
+#[sample_sync1]
+#{remote} = /path/to/remote/directory
+#{local} = /path/to/local/directory
 #{host} = mysrv1
 #{user} = myuser
 #{port} = portnum
@@ -123,28 +131,27 @@ class Template:
 #{excludes} =
 #    /path/to/exclude1
 #    /path/to/exclude2
-#{reference} = sync2 sync3
-#{include} = settings1 settings2
+#{syncs} = sync2 sync3
+#{sections} = settings1 settings2
 '''.format(program   = Runtime.program,
            remote    = Tags.REMOTE,
            local     = Tags.LOCAL,
-           reference = Tags.REFERENCE,
-           include   = Tags.INCLUDE,
+           syncs     = Tags.SYNCS,
+           sections  = Tags.SECTIONS,
            includes  = Tags.INCLUDES,
            excludes  = Tags.EXCLUDES,
            host      = Tags.HOST,
            user      = Tags.USER,
-           port      = Tags.PORT)
+           port      = Tags.PORT,
+           username  = os.getlogin())
 
 class Messages(object):
     BAD_COMMAND    = 'Unknown command: {command}'
     NO_COMMAND     = 'No command specified'
-    CONFIG_MISSING = 'Configuration "{config}" not found'.format(config = Runtime.config)
-    CONFIG_ERRORS  = '* Configuration "{config}" has {{nerrors}} error{{plural}} *'.format(
-                        config = Runtime.config)
-    PROMPT_SETUP   = 'Overwrite existing "{config}"'.format(config = Runtime.config)
-    SHOW_SETUP     = 'Creating new "{config}", please edit before using.'.format(
-                        config = Runtime.config)
+    CONFIG_MISSING = '{dotfile} or {etcfile} not found here or above; use "{command}" to create one'
+    CONFIG_ERRORS  = '* Configuration "{config}" has {{nerrors}} error{{plural}} *'
+    PROMPT_SETUP   = 'Overwrite existing "{config}"'
+    SHOW_SETUP     = 'Creating new "{config}", please edit before using.'
     REMOTE_MISSING = '{sname}: Remote directory must be set if local is set'
     LOCAL_MISSING  = '{sname}: Local directory "{ldir}" does not exist'
     RSYNC_ERROR    = 'rsync {rsopts}', 'Error code: {rserror}'
@@ -153,17 +160,19 @@ class Messages(object):
     SYNCHRONIZING  = 'Synchronize: {label}'
     SHOW_COMMAND   = 'Command: rsync {sopts}'
     PROMPT_SYNC    = 'Sync: {label}', 'From: {source}', '  To: {target}'
-    SHOW_PATH      = 'PATH={path}'.format(path = os.environ['PATH'])
+    SHOW_PATH      = 'PATH={path}'
+    CONFIG_NO_DIRS = 'No directory specified for {command} command'
+    DIR_MISSING    = 'Directory does not exist: {directory}'
 
 #===============================================================================
 class Syncer(object):
 #===============================================================================
 
-    def __init__(self, show, keep, pretend, verbose):
-        self.show    = show
-        self.keep    = keep
-        self.pretend = pretend
-        self.verbose = verbose
+    def __init__(self, show_commands, keep_deleted, dry_run, verbose):
+        self.show_commands = show_commands
+        self.keep_deleted  = keep_deleted
+        self.dry_run       = dry_run
+        self.verbose       = verbose
 
     def push(self, op):
         if not Tags.LOCAL in op.a or not Tags.REMOTE in op.a:
@@ -176,7 +185,7 @@ class Syncer(object):
                                                   remote=op.get(Tags.REMOTE))
         else:
             tgt = op.get(Tags.REMOTE)
-        if not self.show:
+        if not self.show_commands:
             self._rsync(src,
                         tgt,
                         op.get(Tags.PORT),
@@ -186,7 +195,7 @@ class Syncer(object):
                         op.get(Tags.FUZZ),
                         True,
                         op.name)
-        if self.show or not self.pretend:
+        if self.show_commands or not self.dry_run:
             self._rsync(src,
                         tgt,
                         op.get(Tags.PORT),
@@ -209,7 +218,7 @@ class Syncer(object):
         else:
             src = op.get(Tags.REMOTE)
         tgt = op.get(Tags.LOCAL)
-        if not self.show:
+        if not self.show_commands:
             self._rsync(src,
                         tgt,
                         op.get(Tags.PORT),
@@ -219,7 +228,7 @@ class Syncer(object):
                         op.get(Tags.FUZZ),
                         True,
                         op.name)
-        if self.show or not self.pretend:
+        if self.show_commands or not self.dry_run:
             self._rsync(src,
                         tgt,
                         op.get(Tags.PORT),
@@ -247,38 +256,38 @@ class Syncer(object):
                 opts.append('--modify-window=%d' % int(fuzz))
             except ValueError:
                 console.abort('Fuzz value is not an integer: %s' % fuzz)
-        opts.extend(['--include="{include}"'.format(include = include) for include in includes])
-        opts.extend(['--exclude="{exclude}"'.format(exclude = exclude) for exclude in excludes])
+        opts.extend(['--include="{include}"'.format(include=include) for include in includes])
+        opts.extend(['--exclude="{exclude}"'.format(exclude=exclude) for exclude in excludes])
         if (source.find('@') >= 0 or target.find('@') >= 0) and port:
-            opts.append('-e "ssh -p {port}"'.format(port = port))
-        if not self.keep:
+            opts.append('-e "ssh -p {port}"'.format(port=port))
+        if not self.keep_deleted:
             opts.extend(RsyncOptions.delete)
         sopts = ' '.join(opts)
-        if self.show:
-            sys.stdout.write('rsync {sopts}\n'.format(sopts = sopts))
+        if self.show_commands:
+            sys.stdout.write('rsync {sopts}\n'.format(sopts=sopts))
         else:
             if dryrun:
-                rsopts = '--dry-run {sopts}'.format(sopts = sopts)
-                console.header(Messages.DRY_RUN, label = label)
+                rsopts = '--dry-run {sopts}'.format(sopts=sopts)
+                console.header(Messages.DRY_RUN, label=label)
             else:
                 if self.verbose:
-                    console.info('', Messages.SHOW_COMMAND, sopts = sopts)
+                    console.info('', Messages.SHOW_COMMAND, sopts=sopts)
                 rsopts = sopts
-                console.pause(Messages.PROMPT_SYNC, label = label, source = source, target = target)
+                console.pause(Messages.PROMPT_SYNC, label=label, source=source, target=target)
             if self.verbose:
-                console.info(Messages.SHOW_PATH)
+                console.info(Messages.SHOW_PATH, path=os.environ['PATH'])
             if not dryrun:
-                console.header(Messages.SYNCHRONIZING, label = label)
-            f = os.popen('rsync {rsopts}'.format(rsopts = rsopts))
+                console.header(Messages.SYNCHRONIZING, label=label)
+            f = os.popen('rsync {rsopts}'.format(rsopts=rsopts))
             for line in f:
                 s = line.rstrip()
                 if not os.path.isdir(line.rstrip()):
-                    sys.stdout.write('{s}\n'.format(s = s))
+                    sys.stdout.write('{s}\n'.format(s=s))
             rserror = f.close()
             if rserror is not None:
-                console.abort(Messages.RSYNC_ERROR, rsopts = rsopts, rserror = rserror)
-            if self.verbose and dryrun and self.pretend:
-                console.info('', Messages.SHOW_COMMAND, sopts = sopts)
+                console.abort(Messages.RSYNC_ERROR, rsopts = rsopts, rserror=rserror)
+            if self.verbose and dryrun and self.dry_run:
+                console.info('', Messages.SHOW_COMMAND, sopts=sopts)
 
 #===============================================================================
 def iter_options(options):
@@ -303,9 +312,6 @@ def parse_command_line():
         command = 'help'
     else:
         command = args[0].lower()
-    if command != 'setup' and not os.path.isfile(Runtime.config):
-        console.warning(Messages.CONFIG_MISSING)
-        return ('setup', [], options)
     if command == 'help':
         print ''
         parser.print_help()
@@ -324,7 +330,7 @@ def validate_config(config):
 #===============================================================================
 
     errors = []
-    for section in config.iter_sections(reference = Tags.REFERENCE):
+    for section in config.iter_sections(reference = Tags.SYNCS):
         if section.has(Tags.LOCAL):
             if not section.has(Tags.REMOTE):
                 for error in listutil.flatten_strings(Messages.REMOTE_MISSING,
@@ -341,22 +347,36 @@ def validate_config(config):
             plural = 's'
         else:
             plural = ''
-        console.abort(Messages.CONFIG_ERRORS, errors, nerrors = nerrors, plural = plural)
+        console.abort(Messages.CONFIG_ERRORS, errors,
+                      nerrors=nerrors,
+                      plural=plural,
+                      config=config.name)
 
 #===============================================================================
-def setup_config():
+def execute_config(directories):
 #===============================================================================
 
-    if os.path.exists(Runtime.config):
-        console.pause(Messages.PROMPT_SETUP)
-    console.info(Messages.SHOW_SETUP)
-    open(Runtime.config, 'w').write(Template.text)
+    if not directories:
+        console.abort(Messages.CONFIG_NO_DIRS, command='config')
+
+    for directory in directories:
+        if not os.path.isdir(directory):
+            console.error(Messages.DIR_MISSING, directory=directory)
+            continue
+        if os.path.basename(os.path.abspath(directory)) == 'etc':
+            path = os.path.join(os.path.dirname(directory), Runtime.etc_config_rel_path)
+        else:
+            path = os.path.join(directory, Runtime.dot_config_file_name)
+        if os.path.exists(path):
+            console.pause(Messages.PROMPT_SETUP, config=path)
+        console.info(Messages.SHOW_SETUP, config=path)
+        open(path, 'w').write(Template.text)
 
 #===============================================================================
 def execute_dump(config):
 #===============================================================================
 
-    for op in config.iter_sections(reference = Tags.REFERENCE):
+    for op in config.iter_sections(reference = Tags.SYNCS):
         print '\n[{name}]'.format(name = op.name)
         for name in op.names():
             value = op.get(name)
@@ -379,8 +399,8 @@ def execute_dump(config):
 def execute_list(config):
 #===============================================================================
 
-    for op in config.iter_sections(reference = Tags.REFERENCE):
-        if op.has(Tags.REFERENCE) and op.get(Tags.REFERENCE):
+    for op in config.iter_sections(reference = Tags.SYNCS):
+        if op.has(Tags.SYNCS) and op.get(Tags.SYNCS):
             print op.name
     for op in config.iter_sections():
         if op.has(Tags.LOCAL, Tags.REMOTE):
@@ -391,7 +411,7 @@ def execute_push(config, syncer, syncnames):
 #===============================================================================
 
     if syncnames:
-        for op in config.iter_sections(syncnames, reference = Tags.REFERENCE):
+        for op in config.iter_sections(syncnames, reference = Tags.SYNCS):
             if op.has(Tags.LOCAL, Tags.REMOTE):
                 syncer.push(op)
     else:
@@ -402,34 +422,57 @@ def execute_pull(config, syncer, syncnames):
 #===============================================================================
 
     if syncnames:
-        for op in config.iter_sections(syncnames, reference = Tags.REFERENCE):
+        for op in config.iter_sections(syncnames, reference = Tags.SYNCS):
             syncer.pull(op)
     else:
         console.abort('No names specified for pull operation')
 
 #===============================================================================
-def execute_command(command, syncnames, options):
+def load_config():
 #===============================================================================
 
-    if command == 'setup':
-        setup_config()
+    paths = []
+    d = os.getcwd()
+    while True:
+        path = os.path.join(d, Runtime.dot_config_file_name)
+        if os.path.isfile(path):
+            paths.append(path)
+        path = os.path.join(d, Runtime.etc_config_rel_path)
+        if os.path.isfile(path):
+            paths.append(path)
+        d2 = os.path.dirname(d)
+        if not d2 or d2 == d:
+            break
+        d = d2
+    if not paths:
+        console.abort(Messages.CONFIG_MISSING,
+                      dotfile=Runtime.dot_config_file_name,
+                      etcfile=Runtime.etc_config_rel_path,
+                      command='config')
+    config = configmapper.Config.load(paths,
+                                      required=Tags.required,
+                                      numbers=Tags.numbers,
+                                      lists=Tags.lists,
+                                      keywords=Tags.keywords)
+    validate_config(config)
+    return config
+
+#===============================================================================
+def execute_command(command, args, options):
+#===============================================================================
+
+    if command == 'config':
+        execute_config(args)
         sys.exit()
 
     savedir = os.getcwd()
-
-    config = configmapper.Config.load(Runtime.config,
-                                      required = Tags.required,
-                                      numbers  = Tags.numbers,
-                                      lists    = Tags.lists,
-                                      keywords = Tags.keywords)
-    validate_config(config)
-
-    syncer = Syncer(options.show, options.keep, options.pretend, options.verbose)
+    config = load_config()
+    syncer = Syncer(options.show_commands, options.keep_deleted, options.dry_run, options.verbose)
 
     if command == 'push':
-        execute_push(config, syncer, syncnames)
+        execute_push(config, syncer, args)
     elif command == 'pull':
-        execute_pull(config, syncer, syncnames)
+        execute_pull(config, syncer, args)
     elif command == 'list':
         execute_list(config)
     elif command == 'dump':
@@ -439,7 +482,7 @@ def execute_command(command, syncnames, options):
 
     os.chdir(savedir)
 
-    if not options.show:
+    if not options.show_commands:
         sys.stdout.write('\n')
 
 #===============================================================================
