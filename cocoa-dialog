@@ -1,0 +1,10 @@
+#!/bin/bash
+for _APP_DIR in /Applications $HOME/Applications; do
+    _PATH=$_APP_DIR/cocoaDialog.app/Contents/MacOS/cocoaDialog
+    if [ -x $_PATH ]; then
+        $_PATH "$@"
+        exit $?
+    fi
+done
+echo "CocoaDialog.app not found. http://mstratman.github.io/cocoadialog" 1>&2
+exit 255
