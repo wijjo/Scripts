@@ -81,7 +81,7 @@ class Global:
     output_directory = ('.%s' % script_name)
     config_path = os.path.expanduser('~/.%src' % script_name)
     sys.path.insert(0, lib_dir)
-    from followlib.defaultrc import default_rc_text
+    from lib.follow.defaultrc import default_rc_text
 
 def _message(f, tag, *msgs):
     '''Low level message display.'''
@@ -284,14 +284,14 @@ if __name__ == '__main__':
     configure(options)
     try:
         if options.test:
-            import followlib.test
-            for test in followlib.test.test_data:
+            import lib.follow.test
+            for test in lib.follow.test.test_data:
                 if test.name == options.test:
                     break
             else:
                 abort('Could not find test "%s"' % options.test,
                       'Known tests: %s' % ' '.join([t.name for t in test_data]))
-            reader = followlib.test.TestReader(test.name, test.text)
+            reader = lib.follow.test.TestReader(test.name, test.text)
             options.colorizer = test.colorizer
         else:
             if len(args) > 0:
