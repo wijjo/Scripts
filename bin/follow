@@ -131,10 +131,13 @@ class CommandReader(object):
             self.name = args[0]
     def __iter__(self):
         try:
-            proc = subprocess.Popen(self.args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            proc = subprocess.Popen(self.args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1)
             for line in iter(proc.stdout.readline, ''):
                 yield line.rstrip()
             proc.stdout.close()
+            rc = proc.wait()
+            if rc != 0:
+                warning('Command returned error %d' % rc)
         except Exception, e:
             warning('Exception running command: %s' % ' '.join(self.args), e)
 
