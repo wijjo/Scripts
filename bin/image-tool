@@ -61,7 +61,6 @@ class Chopper(object):
                         logger.abort('Crop operation failed.')
 
 @cli.Command(
-    name='chop',
     description='Chop up one or more images based on a grid specification.',
     args=[
         cli.Integer('xgrid', 'number of X grid elements'),
@@ -72,7 +71,7 @@ class Chopper(object):
         cli.String('output_base', 'custom base name for output files', '-o', '--output-base'),
     ],
 )
-def _chop(runner):
+def chop(runner):
     chopper = Chopper(runner.cmdargs.xgrid,
                       runner.cmdargs.ygrid,
                       runner.cmdargs.xoffset,
@@ -100,7 +99,7 @@ Uses the input file base name as the output file base name.''',
         cli.String('output_base', 'custom base name for output files', '-o', '--output-base'),
     ],
 )
-def _ios_icons(runner):
+def ios_icons(runner):
     for arg in runner.cmdargs.input_image:
         for path in glob.glob(os.path.expanduser(os.path.expandvars(arg))):
             if os.path.exists(path):
@@ -127,21 +126,14 @@ def _ios_icons(runner):
                 resize(152, 'ipad-app-2x')
                 resize(180, 'iphone-app-3x')
 
-def main():
-    parser = cli.Parser(
-        'Operate on image files.',
-        cli.Boolean('dryrun', "perform dry run - display, but don't execute commands",
-                    '-n', '--dry-run'),
-        cli.Boolean('verbose', "enable verbose messages",
-                    '-v', '--verbose')
-    )
-    parser.parse()
-    logger.set_verbose(parser.cmdargs.verbose)
-    try:
-        parser.run()
-    except KeyboardInterrupt:
-        sys.exit(1)
+@cli.Main(
+    description='Assorted image file operations.',
+    support_verbose=True,
+    support_dryrun=True,
+)
+def main(runner):
+    logger.set_verbose(runner.cmdargs.verbose)
 
 
 if __name__ == '__main__':
-    main()
+    cli.main()

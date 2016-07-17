@@ -1,13 +1,55 @@
 #!/usr/bin/env python
+# Copyright 2016 Steven Cooper
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 #===============================================================================
 #===============================================================================
 # TZAR - simple archiving front end
 #
-# Supports multiple archivers, e.g. gzip, bzip2, zip, xz, lzip, and p7zip.
-# Minimizes command line options by optimizing for simple local archival
-# needs. E.g. there is no need to specify output file names. Uses pv for
-# progress display when available. Substitutes faster archivers like
-# pigz, pxz, lbzip2, and pbzip2 when available.
+# Features:
+#
+#   Multiple archive formats:
+#
+#     - gzip    standard with high speed and less compression
+#     - bzip2   standard with better compression than gzip, but slower
+#     - xz      newer standard with better compression than bzip2, but slower
+#     - zip     multi-platform format with good speed/compression balance
+#     - p7zip   slower high compression format
+#     - lzip    another slower high compression format
+#     - put     straight file copy
+#
+#   Performance:
+#
+#     Performance is determined by the external command line tool that is used
+#     for a particular format, but it takes advantage of faster multi-threaded
+#     archiving tools like pigz, pxz, lbzip2, and pbzip2 when available.
+#
+#   Operations:
+#
+#     - compress using format choice
+#     - compare to archive (limited)
+#     - restore from archive (limited)
+#     - generate a configuration file template
+#
+#   Usability:
+#
+#     - Provides a simple command line interface, e.g. that allows creating an
+#       archive without specifying an output file.
+#     - Uses pv when it is available to display a real-time i/o progress meter.
+#     - Supports per-location and global configuration files to fine-tune
+#       default options for different directories, e.g. to always exclude local
+#       temporary files from the archive.
 #===============================================================================
 #===============================================================================
 
@@ -162,7 +204,7 @@ def quote_args(*args):
 
 #===============================================================================
 
-class Runner(object):
+class CommandBatch(object):
     def __init__(self, echo=False, dryrun=False):
         self.echo   = echo
         self.dryrun = dryrun
@@ -296,39 +338,39 @@ class ArchiveTarball(ArchiveItem):
         self.tar_compare_options = '-%s%s%s' % ('d', self.tar_compression_options, 'f')
 
     def create(self):
-        runner = Runner(dryrun=self.dryrun)
-        runner.append('tar')
+        batch = CommandBatch(dryrun=self.dryrun)
+        batch.append('tar')
         # Add object file exclusions?
         if self.ignoreobj:
             for pat in CONFIG.data.BINARY_PATTERNS:
-                runner.add_args('--exclude', quote_args(pat))
+                batch.add_args('--exclude', quote_args(pat))
         # Add VCS exclusions?
         if self.ignorevcs:
             for pat in CONFIG.data.VCS_DIRECTORIES:
-                runner.add_args('--exclude', quote_args('*/', pat, '/*'))
+                batch.add_args('--exclude', quote_args('*/', pat, '/*'))
         # Add other exclusions?
         for exclude in self.excludes:
-            runner.add_args('--exclude', quote_args(exclude))
+            batch.add_args('--exclude', quote_args(exclude))
         # Add tar options based on compression type
-        runner.add_args(*self.tar_create_options)
+        batch.add_args(*self.tar_create_options)
         # Complete command line for running with or without pv
         if PV_AVAILABLE and not self.noprogress:
-            runner.add_args('-',
+            batch.add_args('-',
                             quote_args(self.path),
                             '|',
                             'pv',
                             '-rbt',
                             '>',
                             quote_args(self.archive, self.tar_extension))
-            runner.insert('echo',
+            batch.insert('echo',
                           quote_args('Creating "', self.archive, self.tar_extension, '"...'))
         else:
-            runner.add_args(quote_args(self.archive, self.tar_extension), quote_args(self.path))
+            batch.add_args(quote_args(self.archive, self.tar_extension), quote_args(self.path))
         # Delete original when done?
         if self.delete:
-            runner.append('rm', '-rvf', quote_args(self.path))
+            batch.append('rm', '-rvf', quote_args(self.path))
         # Run command batch
-        runner.run()
+        batch.run()
 
     def restore(self):
         dir = utility.get_versioned_path(os.path.basename(self.path)[:-len(self.tar_extension)])
@@ -356,25 +398,25 @@ class ArchiveZip(ArchiveItem):
         ArchiveItem.__init__(self, path, **kwargs)
 
     def create(self):
-        runner = Runner(dryrun=self.dryrun)
-        runner.append('zip', '-r', '--symlinks')
-        runner.add_args(quote_args(self.archive, '.zip'), quote_args(self.path))
+        batch = CommandBatch(dryrun=self.dryrun)
+        batch.append('zip', '-r', '--symlinks')
+        batch.add_args(quote_args(self.archive, '.zip'), quote_args(self.path))
         # Add object file exclusions?
         if self.ignoreobj:
             for pat in CONFIG.data.BINARY_PATTERNS:
-                runner.add_args('--exclude', quote_args(pat))
+                batch.add_args('--exclude', quote_args(pat))
         # Add VCS exclusions?
         if self.ignorevcs:
             for pat in CONFIG.data.VCS_DIRECTORIES:
-                runner.add_args('--exclude', quote_args('*/', pat, '/*'))
+                batch.add_args('--exclude', quote_args('*/', pat, '/*'))
         # Add other exclusions?
         for exclude in self.excludes:
-            runner.add_args('--exclude', quote_args(exclude))
+            batch.add_args('--exclude', quote_args(exclude))
         # Delete original when done?
         if self.delete:
-            runner.append('rm', '-rvf', quote_args(self.path))
+            batch.append('rm', '-rvf', quote_args(self.path))
         # Run command batch
-        runner.run()
+        batch.run()
 
     def restore(self):
         logger.abort('Restore is not yet implemented for zip compression.')
@@ -398,25 +440,25 @@ class ArchiveP7Zip(ArchiveItem):
         ArchiveItem.__init__(self, path, **kwargs)
 
     def create(self):
-        runner = Runner(dryrun=self.dryrun)
-        runner.append('7za', 'a')
+        batch = CommandBatch(dryrun=self.dryrun)
+        batch.append('7za', 'a')
         # Add object file exclusions?
         if self.ignoreobj:
             for pat in CONFIG.data.BINARY_PATTERNS:
-                runner.add_args(quote_args('-xr!', pat))
+                batch.add_args(quote_args('-xr!', pat))
         # Add VCS exclusions?
         if self.ignorevcs:
             for pat in CONFIG.data.VCS_DIRECTORIES:
-                runner.add_args(quote_args('-xr!', pat, '/*'))
+                batch.add_args(quote_args('-xr!', pat, '/*'))
         # Add other exclusions?
         for exclude in self.excludes:
-            runner.add_args('-xr!%s' % quote_args(exclude))
-        runner.add_args(quote_args(self.archive, '.7z'), quote_args(self.path))
+            batch.add_args('-xr!%s' % quote_args(exclude))
+        batch.add_args(quote_args(self.archive, '.7z'), quote_args(self.path))
         # Delete original when done?
         if self.delete:
-            runner.append('rm', '-rvf', quote_args(self.path))
+            batch.append('rm', '-rvf', quote_args(self.path))
         # Run command batch
-        runner.run()
+        batch.run()
 
     def restore(self):
         logger.abort('Restore is not yet implemented for p7zip compression.')
@@ -450,16 +492,16 @@ class ArchiveCompressedFile(ArchiveItem):
         self.compression = compression
 
     def create(self):
-        runner = Runner(dryrun=self.dryrun)
+        batch = CommandBatch(dryrun=self.dryrun)
         # Move or copy the file to the archive subdirectory
         if self.delete:
-            runner.append('mv', '-v', quote_args(self.path), quote_args(self.archive))
+            batch.append('mv', '-v', quote_args(self.path), quote_args(self.archive))
         else:
-            runner.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(self.archive))
+            batch.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(self.archive))
         # Then compress it
-        runner.append(self.compression, quote_args(self.archive))
+        batch.append(self.compression, quote_args(self.archive))
         # Run command batch
-        runner.run()
+        batch.run()
 
     def restore(self):
         pass
@@ -482,19 +524,19 @@ class ArchiveDirectory(ArchiveItem):
         ArchiveItem.__init__(self, path, **kwargs)
 
     def create(self):
-        runner = Runner(dryrun=self.dryrun)
+        batch = CommandBatch(dryrun=self.dryrun)
         if self.delete:
-            runner.append('mv', '-v', quote_args(self.path), quote_args(self.archive))
+            batch.append('mv', '-v', quote_args(self.path), quote_args(self.archive))
         else:
-            runner.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(self.archive))
-        runner.run()
+            batch.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(self.archive))
+        batch.run()
 
     def restore(self):
         target = utility.get_versioned_path(self.path)
-        runner = Runner(dryrun=self.dryrun)
-        runner.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(target))
+        batch = CommandBatch(dryrun=self.dryrun)
+        batch.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(target))
         logger.info('Restoring to "%s"...' % target)
-        runner.run()
+        batch.run()
 
 
 #===============================================================================
@@ -512,19 +554,19 @@ class ArchiveFile(ArchiveItem):
         ArchiveItem.__init__(self, path, **kwargs)
 
     def create(self):
-        runner = Runner(dryrun=self.dryrun)
+        batch = CommandBatch(dryrun=self.dryrun)
         if self.delete:
-            runner.append('mv', '-v', quote_args(self.path), quote_args(self.archive))
+            batch.append('mv', '-v', quote_args(self.path), quote_args(self.archive))
         else:
-            runner.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(self.archive))
-        runner.run()
+            batch.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(self.archive))
+        batch.run()
 
     def restore(self, path):
         target = utility.get_versioned_path(self.path)
-        runner = Runner(dryrun=self.dryrun)
-        runner.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(target))
+        batch = CommandBatch(dryrun=self.dryrun)
+        batch.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(target))
         logger.info('Restoring to "%s"...' % target)
-        runner.run()
+        batch.run()
 
 
 #===============================================================================
@@ -750,26 +792,18 @@ def read_configs(runner, *directories):
 
 
 #===============================================================================
-def main():
+@cli.Main(
+    description='Simple backup archiver.',
+    support_verbose=True,
+    support_dryrun=True,
+    support_pause=True,
+)
 #===============================================================================
-    parser = cli.Parser(
-        'Simple backup archiver.',
-        cli.Boolean('dryrun', "perform dry run - display, but don't execute commands",
-                    '-n', '--dry-run'),
-        cli.Boolean('pause', "pause before executing each command",
-                    '-p', '--pause'),
-        cli.Boolean('verbose', "enable verbose messages",
-                    '-v', '--verbose')
-    )
-    parser.parse()
-    logger.set_verbose(parser.cmdargs.verbose)
-    parser.run()
+def _main(runner):
+    logger.set_verbose(runner.cmdargs.verbose)
 
 
 #===============================================================================
 if __name__ == '__main__':
 #===============================================================================
-    try:
-        main()
-    except KeyboardInterrupt:
-        sys.exit(1)
+    cli.main()

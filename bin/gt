@@ -14,25 +14,19 @@ import python_misc.utility as utility
 
 
 #===============================================================================
-def main():
+@cli.Main(
+    description='Assorted higher level commands for working in a Git environment.',
+    support_verbose=True,
+    support_dryrun=True,
+    support_pause=True,
+)
 #===============================================================================
-    runner = cli.Parser(
-        'Various commands for working in a Git environment.',
-        cli.Boolean('dryrun', "perform dry run - display, but don't execute commands",
-                    '-n', '--dry-run'),
-        cli.Boolean('pause', "pause before executing each command",
-                    '-p', '--pause'),
-        cli.Boolean('verbose', "enable verbose messages",
-                    '-v', '--verbose')
-    )
-    runner.parse()
+def _main(runner):
     logger.set_verbose(runner.cmdargs.verbose)
-    runner.run()
 
 
 #===============================================================================
 @cli.Command(
-    name='status',
     aliases=['st'],
     description='Show pending changes and other status.',
     args=[
@@ -41,7 +35,7 @@ def main():
     ],
 )
 #===============================================================================
-def _status(runner):
+def status(runner):
     root_dir = git.git_project_root()
     save_dir = os.getcwd()
     os.chdir(root_dir)
@@ -86,7 +80,6 @@ def _status(runner):
 
 #===============================================================================
 @cli.Command(
-    name='snapshot',
     description='Archive uncommitted changes and capture a patch diff.',
     args=[
         cli.Boolean('all', 'include unmanaged files in archive', '-a', '--all'),
@@ -94,7 +87,7 @@ def _status(runner):
     ],
 )
 #===============================================================================
-def _snapshot(runner):
+def snapshot(runner):
 
     root_dir = git.git_project_root()
     save_dir = os.getcwd()
@@ -158,7 +151,6 @@ def _snapshot(runner):
 
 #===============================================================================
 @cli.Command(
-    name='new',
     description='Make a new branch.',
     args=[
         cli.String('ancestor', 'ancestor branch name', '-a', default=None),
@@ -166,7 +158,7 @@ def _snapshot(runner):
     ],
 )
 #===============================================================================
-def _new(runner):
+def new(runner):
     folder = runner.cmdargs.branch
     runner.update(folder=folder)
     runner.shell('git fetch')
@@ -182,11 +174,10 @@ def _new(runner):
 
 #===============================================================================
 @cli.Command(
-    name='branches',
     description='List my branches and unmerged commits.',
 )
 #===============================================================================
-def _branches(runner):
+def branches(runner):
     info = git.get_info()
     for branch in git.iter_branches(user = info.user.name):
         sys.stdout.write('%s%s' % (branch, os.linesep))
@@ -196,7 +187,6 @@ def _branches(runner):
 
 #===============================================================================
 @cli.Command(
-    name='rename',
     description='Rename local and remote branch.',
     args=[
         cli.String('remotename', 'remote branch name, if different from local', '-r'),
@@ -204,7 +194,7 @@ def _branches(runner):
     ],
 )
 #===============================================================================
-def _rename(runner):
+def rename(runner):
     newlocal = runner.cmdargs.branch
     if runner.cmdargs.remotename:
         newremote = runner.cmdargs.remotename
@@ -224,14 +214,13 @@ def _rename(runner):
 
 #===============================================================================
 @cli.Command(
-    name='review',
     description='Submit a pull request for review.',
     args=[
         cli.String('title', 'pull request title'),
     ],
 )
 #===============================================================================
-def _review(runner):
+def review(runner):
     tracking_branch = git.get_tracking_branch()
     branch = tracking_branch.split('/')[1]
     if not utility.find_executable('hub'):
@@ -242,21 +231,16 @@ def _review(runner):
 
 #===============================================================================
 @cli.Command(
-    name='url',
     description='Display the repository URL.',
     args=[
     ],
 )
 #===============================================================================
-def _url(runner):
+def url(runner):
     print git.get_repository_url()
 
 
 #===============================================================================
 if __name__ == '__main__':
 #===============================================================================
-    try:
-        main()
-    except KeyboardInterrupt:
-        sys.exit(1)
-
+    cli.main()
