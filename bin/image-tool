@@ -5,10 +5,10 @@ import os
 import glob
 import re
 
-from lib import import_python_misc
-import python_misc.cli as cli
-import python_misc.logger as logger
-import python_misc.run as run
+from lib import import_scriptbase
+import scriptbase.cli as cli
+import scriptbase.logger as logger
+import scriptbase.run as run
 
 # Matches identity output without the file name at the front.
 re_identify = re.compile(r'(\w+)\s+(\d+)x(\d+)\s+(\d+)x(\d+)[+](\d+)[+](\d+)\s+.*', re.IGNORECASE)

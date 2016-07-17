@@ -15,10 +15,10 @@ class Runtime:
     etc_config_rel_path = os.path.join('etc', '{0}'.format(program))
     dot_config_file_name = '.{0}rc'.format(program)
 
-from lib import import_python_misc
-from python_misc import configmapper
-from python_misc import console
-from python_misc import listutil
+from lib import import_scriptbase
+from scriptbase import configmapper
+from scriptbase import console
+from scriptbase import listutil
 
 class Option:
     def __init__(self, letter, word, dest, help):

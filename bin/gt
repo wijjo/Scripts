@@ -5,12 +5,12 @@ import os
 import time
 import zipfile
 
-from lib import import_python_misc
-import python_misc.cli as cli
-import python_misc.git as git
-import python_misc.logger as logger
-import python_misc.run as run
-import python_misc.utility as utility
+from lib import import_scriptbase
+import scriptbase.cli as cli
+import scriptbase.git as git
+import scriptbase.logger as logger
+import scriptbase.run as run
+import scriptbase.utility as utility
 
 
 #===============================================================================

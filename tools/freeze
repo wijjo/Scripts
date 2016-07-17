@@ -71,10 +71,10 @@ fi
 
 for _PROG in "$@"; do
     [ -n "$_VERBOSE_OPT" ] && echo "Freezing script: $_PROG"
-    _PYTHON_MISC=$PWD/ext/python_misc
+    _SCRIPTBASE=$PWD/ext/scriptbase
     if [ -e "$_PROG" ]; then
         _run pushd "$(dirname $_PROG)" > /dev/null
-        _run pyinstaller -p $_PYTHON_MISC -F --specpath $PWD/spec $(basename $_PROG)
+        _run pyinstaller -p $_SCRIPTBASE -F --specpath $PWD/spec $(basename $_PROG)
         _run popd > /dev/null
     else
         echo "ERROR: Script does not exist: $_PROG" 1>&2

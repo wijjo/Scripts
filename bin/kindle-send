@@ -2,8 +2,8 @@
 
 import sys, os, smtplib, email, imp
 
-from lib import import_python_misc
-import python_misc.utility as utility
+from lib import import_scriptbase
+import scriptbase.utility as utility
 
 
 CONFIG_PATH = os.path.expanduser(os.path.join('~', '.kindle-send.py'))
