@@ -1,6 +1,0 @@
-BUILDER_PREFIX = 'CI.builder'
-ATTR_DESC      = 'description'
-ATTR_ACT       = 'actions'
-ATTR_DEP       = 'dependencies'
-ATTR_FEAT      = 'features'
-LABEL_SKIPPED  = '(skipped)'
