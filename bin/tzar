@@ -61,10 +61,10 @@ from time import strftime
 from glob import glob
 
 from lib import import_scriptbase
-import scriptbase.cli as cli
-import scriptbase.logger as logger
+from scriptbase import cli
+from scriptbase import logger
 from scriptbase.python_config import ConfigSpec, Config
-import scriptbase.utility as utility
+from scriptbase import utility
 
 
 #=== Non-configurable globals ==================================================
@@ -276,7 +276,7 @@ class ArchiveItem(object):
             logger.info('Creating %s...' % self.outputdir)
             try:
                 os.mkdir(self.outputdir)
-            except (IOError, OSError), e:
+            except (IOError, OSError) as e:
                 logger.abort('Unable to create output directory', self.outputdir, e)
 
 
