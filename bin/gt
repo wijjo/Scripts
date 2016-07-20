@@ -6,11 +6,7 @@ import time
 import zipfile
 
 from lib import import_scriptbase
-import scriptbase.cli as cli
-import scriptbase.git as git
-import scriptbase.logger as logger
-import scriptbase.run as run
-import scriptbase.utility as utility
+from scriptbase import cli, git, console, run, utility
 
 
 #===============================================================================
@@ -22,7 +18,7 @@ import scriptbase.utility as utility
 )
 #===============================================================================
 def _main(runner):
-    logger.set_verbose(runner.cmdargs.verbose)
+    console.set_verbose(runner.cmdargs.verbose)
 
 
 #===============================================================================
@@ -105,8 +101,8 @@ def snapshot(runner):
     diff_path = os.path.join(output_dir, diff_name)
     diff_path_abs = os.path.realpath(diff_path)
 
-    logger.info('Base directory (Git project root):', [root_dir])
-    logger.info('Output directory:', [output_dir])
+    console.info('Base directory (Git project root):', [root_dir])
+    console.info('Output directory:', [output_dir])
 
     if not runner.cmdargs.dryrun:
         os.makedirs(output_dir)
@@ -115,7 +111,7 @@ def snapshot(runner):
 
         file_paths = []
 
-        logger.info('Archive: %s' % zip_name)
+        console.info('Archive: %s' % zip_name)
 
         for change in git.iter_changes(submodules=True):
             if change.flag.startswith('R'):
@@ -127,7 +123,7 @@ def snapshot(runner):
                     file_paths.append(change.path)
 
         if not file_paths:
-            logger.info('Nothing to archive: %s' % root_name)
+            console.info('Nothing to archive: %s' % root_name)
 
         if not runner.cmdargs.dryrun and file_paths:
             zip_file = zipfile.ZipFile(zip_path_abs, 'w', zipfile.ZIP_DEFLATED)
@@ -137,7 +133,7 @@ def snapshot(runner):
                 zip_file.write(path)
             zip_file.close()
 
-        logger.info('Patch diff: %s' % diff_name)
+        console.info('Patch diff: %s' % diff_name)
 
         if not runner.cmdargs.dryrun:
             with open(diff_path_abs, 'w') as diff_file:
@@ -205,7 +201,7 @@ def rename(runner):
             oldbranch = s[12:]
             break
     else:
-        logger.abort('Not in a GitHub-managed folder.')
+        console.abort('Not in a GitHub-managed folder.')
     runner.update(newlocal=newlocal, newremote=newremote, oldbranch=oldbranch)
     runner.shell('git branch -m %(oldbranch)s %(newlocal)s')
     runner.shell('git push origin %(newremote)s')
@@ -224,8 +220,8 @@ def review(runner):
     tracking_branch = git.get_tracking_branch()
     branch = tracking_branch.split('/')[1]
     if not utility.find_executable('hub'):
-        logger.abort('The hub command must be installed. (http://defunkt.io/hub/)',
-                     'OS X Homebrew command: brew install hub')
+        console.abort('The hub command must be installed. (http://defunkt.io/hub/)',
+                      'OS X Homebrew command: brew install hub')
     runner.shell('hub pull-request "%s" -b %s' % (runner.cmdargs.title, branch))
 
 

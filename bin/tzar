@@ -62,7 +62,7 @@ from glob import glob
 
 from lib import import_scriptbase
 from scriptbase import cli
-from scriptbase import logger
+from scriptbase import console
 from scriptbase.python_config import ConfigSpec, Config
 from scriptbase import utility
 
@@ -227,9 +227,9 @@ class CommandBatch(object):
         for cmd in self.cmds:
             scmd = ' '.join(cmd)
             if self.dryrun:
-                logger.info('>>> %s' % scmd)
+                console.info('>>> %s' % scmd)
             elif self.echo:
-                logger.info(scmd)
+                console.info(scmd)
             if not self.dryrun:
                 os.system(scmd)
 
@@ -272,12 +272,12 @@ class ArchiveItem(object):
     def check_output_directory(self):
         if not os.path.isdir(self.outputdir):
             if os.path.exists(self.outputdir):
-                logger.abort('"%s" exists and is not a directory' % self.outputdir)
-            logger.info('Creating %s...' % self.outputdir)
+                console.abort('"%s" exists and is not a directory' % self.outputdir)
+            console.info('Creating %s...' % self.outputdir)
             try:
                 os.mkdir(self.outputdir)
             except (IOError, OSError) as e:
-                logger.abort('Unable to create output directory', self.outputdir, e)
+                console.abort('Unable to create output directory', self.outputdir, e)
 
 
 #===============================================================================
@@ -375,7 +375,7 @@ class ArchiveTarball(ArchiveItem):
     def restore(self):
         dir = utility.get_versioned_path(os.path.basename(self.path)[:-len(self.tar_extension)])
         os.mkdir(dir)
-        logger.info('Restoring to "%s"...' % dir)
+        console.info('Restoring to "%s"...' % dir)
         os.system('tar %s "%s" --strip-components 1 -C "%s"'
                         % (self.tar_restore_options, self.path, dir))
 
@@ -419,10 +419,10 @@ class ArchiveZip(ArchiveItem):
         batch.run()
 
     def restore(self):
-        logger.abort('Restore is not yet implemented for zip compression.')
+        console.abort('Restore is not yet implemented for zip compression.')
 
     def compare(self):
-        logger.abort('Compare is not yet implemented for zip compression.')
+        console.abort('Compare is not yet implemented for zip compression.')
 
 
 #===============================================================================
@@ -461,10 +461,10 @@ class ArchiveP7Zip(ArchiveItem):
         batch.run()
 
     def restore(self):
-        logger.abort('Restore is not yet implemented for p7zip compression.')
+        console.abort('Restore is not yet implemented for p7zip compression.')
 
     def compare(self):
-        logger.abort('Compare is not yet implemented for p7zip compression.')
+        console.abort('Compare is not yet implemented for p7zip compression.')
 
 
 #===============================================================================
@@ -535,7 +535,7 @@ class ArchiveDirectory(ArchiveItem):
         target = utility.get_versioned_path(self.path)
         batch = CommandBatch(dryrun=self.dryrun)
         batch.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(target))
-        logger.info('Restoring to "%s"...' % target)
+        console.info('Restoring to "%s"...' % target)
         batch.run()
 
 
@@ -565,7 +565,7 @@ class ArchiveFile(ArchiveItem):
         target = utility.get_versioned_path(self.path)
         batch = CommandBatch(dryrun=self.dryrun)
         batch.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(target))
-        logger.info('Restoring to "%s"...' % target)
+        console.info('Restoring to "%s"...' % target)
         batch.run()
 
 
@@ -585,7 +585,7 @@ class FMFactory(object):
             fm = fmCls.forPath(path, **kwargs)
             if fm:
                 return fm
-        logger.abort('"%s" is not a supported type' % path)
+        console.abort('"%s" is not a supported type' % path)
 
 
 #===============================================================================
@@ -593,7 +593,7 @@ class FMFactory(object):
 def choose(name, **kwargs):
 
     if not os.path.isdir(CONFIG.data.OUTPUT_DIRECTORY):
-        logger.abort('No %s directory exists' % CONFIG.data.OUTPUT_DIRECTORY)
+        console.abort('No %s directory exists' % CONFIG.data.OUTPUT_DIRECTORY)
     if name[-1] == '/':
         name = name[:-1]
     pat = os.path.join(CONFIG.data.OUTPUT_DIRECTORY, ARCHIVE_NAME_GLOB % name)
@@ -601,20 +601,20 @@ def choose(name, **kwargs):
     for a in os.popen('ls %s' % pat):
         archives.insert(0, a.strip())
     if len(archives) == 0:
-        logger.abort('No archives found')
-    logger.info('Newest archive is at the top.  Empty input or zero response cancels the action.')
+        console.abort('No archives found')
+    console.info('Newest archive is at the top.  Empty input or zero response cancels the action.')
     for i in range(len(archives)):
-        logger.info('%d) %s' % (i+1, archives[i]))
-    logger.info('')
+        console.info('%d) %s' % (i+1, archives[i]))
+    console.info('')
     path = None
     while path is None:
         i = int(utility.prompt_re('Select archive (1-n [none])', NUMBER_WITH_DEFAULT_RE, '0'))
         if i <= 0:
-            logger.abort('Canceled')
+            console.abort('Canceled')
         if i-1 < len(archives):
             path = archives[i-1]
         else:
-            logger.error('bad index %d' % i)
+            console.error('bad index %d' % i)
     return (path, FMFactory.forPath(path, **kwargs))
 
 
@@ -800,7 +800,7 @@ def read_configs(runner, *directories):
 )
 #===============================================================================
 def _main(runner):
-    logger.set_verbose(runner.cmdargs.verbose)
+    console.set_verbose(runner.cmdargs.verbose)
 
 
 #===============================================================================

@@ -6,9 +6,7 @@ import glob
 import re
 
 from lib import import_scriptbase
-import scriptbase.cli as cli
-import scriptbase.logger as logger
-import scriptbase.run as run
+from scriptbase import cli, console, run
 
 # Matches identity output without the file name at the front.
 re_identify = re.compile(r'(\w+)\s+(\d+)x(\d+)\s+(\d+)x(\d+)[+](\d+)[+](\d+)\s+.*', re.IGNORECASE)
@@ -52,13 +50,13 @@ class Chopper(object):
                 else:
                     name = base
                 path_out = '%(name)s-%(id)s.png' % locals()
-                logger.info(path_out)
+                console.info(path_out)
                 cmd = 'convert %(path)s -crop %(geometry)s %(path_out)s' % locals()
                 if self.dryrun:
                     print cmd
                 else:
                     if os.system(cmd) != 0:
-                        logger.abort('Crop operation failed.')
+                        console.abort('Crop operation failed.')
 
 @cli.Command(
     description='Chop up one or more images based on a grid specification.',
@@ -87,7 +85,7 @@ def chop(runner):
                     if not m is None:
                         chopper.chop(path, base=runner.cmdargs.output_base)
                     else:
-                        logger.error(line)
+                        console.error(line)
 
 @cli.Command(
     name='ios-icons',
@@ -132,7 +130,7 @@ def ios_icons(runner):
     support_dryrun=True,
 )
 def main(runner):
-    logger.set_verbose(runner.cmdargs.verbose)
+    console.set_verbose(runner.cmdargs.verbose)
 
 
 if __name__ == '__main__':
