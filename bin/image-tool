@@ -6,7 +6,7 @@ import glob
 import re
 
 from lib import import_scriptbase
-from scriptbase import cli, console, run
+from scriptbase import cli, console, command
 
 # Matches identity output without the file name at the front.
 re_identify = re.compile(r'(\w+)\s+(\d+)x(\d+)\s+(\d+)x(\d+)[+](\d+)[+](\d+)\s+.*', re.IGNORECASE)
@@ -21,16 +21,16 @@ class Chopper(object):
         self.dryrun = dryrun
 
     def identify(self, path):
-        cmd = run.Command('identify', path)
         width = height = None
-        for line in cmd.pipe():
-            output = line[len(path)+1:]
-            m = re_identify.search(line)
-            if not m is None:
-                width = int(m.group(2))
-                height = int(m.group(3))
-        if width is None:
-            raise Exception('Unable to indentify image file: %s' % path)
+        with command.Command('identify', path) as cmd:
+            for line in cmd:
+                output = line[len(path)+1:]
+                m = re_identify.search(line)
+                if not m is None:
+                    width = int(m.group(2))
+                    height = int(m.group(3))
+            if width is None:
+                raise Exception('Unable to indentify image file: %s' % path)
         return (width, height)
 
 
@@ -78,14 +78,14 @@ def chop(runner):
     for arg in runner.cmdargs.input_image:
         for path in glob.glob(os.path.expanduser(os.path.expandvars(arg))):
             if os.path.exists(path):
-                cmd = run.Command('identify', arg)
-                for line in cmd.pipe():
-                    output = line[len(path)+1:]
-                    m = re_identify.search(line)
-                    if not m is None:
-                        chopper.chop(path, base=runner.cmdargs.output_base)
-                    else:
-                        console.error(line)
+                with command.Command('identify', arg) as cmd:
+                    for line in cmd:
+                        output = line[len(path)+1:]
+                        m = re_identify.search(line)
+                        if not m is None:
+                            chopper.chop(path, base=runner.cmdargs.output_base)
+                        else:
+                            console.error(line)
 
 @cli.Command(
     name='ios-icons',

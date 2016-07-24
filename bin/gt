@@ -6,7 +6,7 @@ import time
 import zipfile
 
 from lib import import_scriptbase
-from scriptbase import cli, git, console, run, utility
+from scriptbase import cli, git, console, command, utility
 
 
 #===============================================================================
@@ -137,9 +137,10 @@ def snapshot(runner):
 
         if not runner.cmdargs.dryrun:
             with open(diff_path_abs, 'w') as diff_file:
-                for line in run.pipe_cmd('git', 'diff'):
-                    diff_file.write(line)
-                    diff_file.write(os.linesep)
+                with command.Command('git', 'diff') as gitcmd:
+                    for line in gitcmd:
+                        diff_file.write(line)
+                        diff_file.write(os.linesep)
 
     finally:
         os.chdir(save_dir)
@@ -196,12 +197,13 @@ def rename(runner):
         newremote = runner.cmdargs.remotename
     else:
         newremote = newlocal
-    for s in run.pipe_cmd('git', 'status'):
-        if s.startswith('# On branch '):
-            oldbranch = s[12:]
-            break
-    else:
-        console.abort('Not in a GitHub-managed folder.')
+    with command.Command('git', 'status') as gitcmd:
+        for s in gitcmd:
+            if s.startswith('# On branch '):
+                oldbranch = s[12:]
+                break
+        else:
+            console.abort('Not in a GitHub-managed folder.')
     runner.update(newlocal=newlocal, newremote=newremote, oldbranch=oldbranch)
     runner.shell('git branch -m %(oldbranch)s %(newlocal)s')
     runner.shell('git push origin %(newremote)s')
