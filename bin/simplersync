@@ -16,9 +16,9 @@ class Runtime:
     dot_config_file_name = '.{0}rc'.format(program)
 
 from lib import import_scriptbase
-from scriptbase import configmapper
+from scriptbase.configmapper import Config, ConfigException
 from scriptbase import console
-from scriptbase import listutil
+from scriptbase.flatten import flatten_strings
 
 class Option:
     def __init__(self, letter, word, dest, help):
@@ -85,7 +85,7 @@ class RsyncOptions:
 
 # Entry tag names
 class Tags:
-    SECTIONS  = configmapper.Config.include_entry
+    SECTIONS  = Config.include_entry
     SYNCS     = 'syncs'
     INCLUDES  = 'includes'
     EXCLUDES  = 'excludes'
@@ -146,14 +146,15 @@ class Template:
            username  = os.getlogin())
 
 class Messages(object):
-    BAD_COMMAND    = 'Unknown command: {command}'
+    BAD_COMMAND    = 'Unknown command: {bad_command}'
     NO_COMMAND     = 'No command specified'
-    CONFIG_MISSING = '{dotfile} or {etcfile} not found here or above; use "{command}" to create one'
+    CONFIG_MISSING = ('{home_path} or {etc_path} not found here or above; '
+                      'use "{create_command}" to create one')
     CONFIG_ERRORS  = '* Configuration "{config}" has {{nerrors}} error{{plural}} *'
     PROMPT_SETUP   = 'Overwrite existing "{config}"'
     SHOW_SETUP     = 'Creating new "{config}", please edit before using.'
-    REMOTE_MISSING = '{sname}: Remote directory must be set if local is set'
-    LOCAL_MISSING  = '{sname}: Local directory "{ldir}" does not exist'
+    REMOTE_MISSING = '{section_name}: Remote directory must be set if local is set'
+    LOCAL_MISSING  = '{section_name}: Local directory "{local_dir}" does not exist'
     RSYNC_ERROR    = 'rsync {rsopts}', 'Error code: {rserror}'
     INTERRUPT      = 'Keyboard interrupt'
     DRY_RUN        = 'Dry Run: {label}'
@@ -333,13 +334,13 @@ def validate_config(config):
     for section in config.iter_sections(reference = Tags.SYNCS):
         if section.has(Tags.LOCAL):
             if not section.has(Tags.REMOTE):
-                for error in listutil.flatten_strings(Messages.REMOTE_MISSING,
-                                                      sname = section.name):
+                for error in flatten_strings(Messages.REMOTE_MISSING,
+                                             section_name=section.name):
                     errors.append(error)
             elif not os.path.exists(section.get(Tags.LOCAL)):
-                for error in listutil.flatten_strings(Messages.LOCAL_MISSING,
-                                                      sname = section.name,
-                                                      ldir = section.get(Tags.LOCAL)):
+                for error in flatten_strings(Messages.LOCAL_MISSING,
+                                             section_name=section.name,
+                                             local_dir=section.get(Tags.LOCAL)):
                     errors.append(error)
     nerrors = len(errors)
     if nerrors > 0:
@@ -446,14 +447,14 @@ def load_config():
         d = d2
     if not paths:
         console.abort(Messages.CONFIG_MISSING,
-                      dotfile=Runtime.dot_config_file_name,
-                      etcfile=Runtime.etc_config_rel_path,
-                      command='config')
-    config = configmapper.Config.load(paths,
-                                      required=Tags.required,
-                                      numbers=Tags.numbers,
-                                      lists=Tags.lists,
-                                      keywords=Tags.keywords)
+                      home_path=Runtime.dot_config_file_name,
+                      etc_path=Runtime.etc_config_rel_path,
+                      create_command='config')
+    config = Config.load(paths,
+                         required=Tags.required,
+                         numbers=Tags.numbers,
+                         lists=Tags.lists,
+                         keywords=Tags.keywords)
     validate_config(config)
     return config
 
@@ -478,7 +479,7 @@ def execute_command(command, args, options):
     elif command == 'dump':
         execute_dump(config)
     else:
-        console.abort(Messages.BAD_COMMAND, command = command)
+        console.abort(Messages.BAD_COMMAND, command=bad_command)
 
     os.chdir(savedir)
 
@@ -492,7 +493,7 @@ if __name__ == '__main__':
     (command, args, options) = parse_command_line()
     try:
         execute_command(command, args, options)
-    except configmapper.ConfigException, e:
+    except ConfigException, e:
         console.abort(str(e))
     except KeyboardInterrupt:
         console.abort(Messages.INTERRUPT)
