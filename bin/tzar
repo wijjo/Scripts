@@ -63,7 +63,7 @@ from glob import glob
 from lib import import_scriptbase
 from scriptbase import cli
 from scriptbase import console
-from scriptbase.python_config import ConfigSpec, Config
+from scriptbase.configuration import ConfigSpec, Config
 from scriptbase import utility
 
 

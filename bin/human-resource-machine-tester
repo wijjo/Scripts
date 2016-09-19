@@ -1,0 +1,279 @@
+#!/usr/bin/env python3
+
+import sys
+import os
+import yaml
+import copy
+import inspect
+
+
+class CompileError(Exception):
+    pass
+
+
+class RunError(Exception):
+    pass
+
+
+class MachineExit(Exception):
+    pass
+
+
+class Instruction(object):
+    def __init__(self, op, func, args):
+        self.op = op
+        self.func = func
+        self.args = args
+    def execute(self):
+        return self.func(*self.args)
+    def __str__(self):
+        return ' '.join([self.op] + ['{}'.format(arg) for arg in self.args])
+
+
+class Machine(object):
+
+    def __init__(self, inbox, code_lines, trace=True):
+        self.inbox = copy.copy(inbox)
+        self.code_lines = code_lines
+        self.trace = trace
+        self.num_steps = 0
+        self.registers = [None] * 10
+        self.current = None
+        self.outbox = []
+        self.instructions = []
+        self.at = 0
+        self.compile_line_num = None
+        self.compile_line = None
+
+    def step(self):
+        '''
+        Execute current instruction.
+        Return a Summary object when execution completes or None to continue.
+        '''
+        try:
+            if self.trace:
+                print(self._current_instruction_string())
+            at_save = self.at
+            self.instructions[self.at].execute()
+            # If it wasn't a jump move to the next instruction.
+            if self.at == at_save:
+                self.at += 1
+            self.num_steps += 1
+            if self.at < len(self.instructions):
+                # Keep going
+                return None
+        except MachineExit:
+            pass
+        class Summary(object):
+            def __init__(self, outbox, num_instructions, num_steps):
+                self.outbox = copy.copy(outbox)
+                self.num_instructions = num_instructions
+                self.num_steps = num_steps
+        return Summary(self.outbox, len(self.instructions), self.num_steps)
+
+    def run(self):
+        try:
+            self._compile(self.code_lines)
+            while True:
+                summary = self.step()
+                if summary:
+                    return summary
+        except CompileError as e:
+            print('COMPILE ERROR at line #%d "%s": %s' % (
+                        self.compile_line_num, self.compile_line, str(e)))
+        except RunError as e:
+            print('RUN ERROR: %s: %s' % (str(e), self._current_instruction_string()))
+
+    ### Operations - raise MachineExit to exit
+
+    def INBOX(self):
+        self._write_current(self._read_inbox())
+
+    def OUTBOX(self):
+        self._write_outbox(self._read_current())
+        self.current = None
+
+    def COPY_TO(self, register):
+        self._write_register(register, self._read_current())
+
+    def COPY_FROM(self, register):
+        self._write_current(self._read_register(register))
+
+    def ADD(self, register):
+        self._write_current(self._read_current() + self._read_register_int(register))
+
+    def SUB(self, register):
+        self._write_current(self._read_current() - self._read_register_int(register))
+
+    def BUMP(self, increment, register):
+        self._write_register(register, self._read_register_int(register) + increment)
+
+    def JUMP(self, location):
+        self._jump(location)
+
+    def JUMP_IF_ZERO(self, location):
+        if self._read_current() == 0:
+            self._jump(location)
+
+    def JUMP_IF_NEGATIVE(self, location):
+        if self._read_current() < 0:
+            self._jump(location)
+
+    ### Private
+
+    def _compile(self, code_lines):
+        self.compile_line_num = 0
+        for self.compile_line in code_lines:
+            print(self.compile_line)
+            self.compile_line_num += 1
+            fields = self.compile_line.split()
+            op = fields[0].upper()
+            args_provided = fields[1:]
+            cls = self.__class__
+            function = getattr(self, op, None)
+            if not function:
+                raise CompileError('Bad operation: %s' % op)
+            arg_names = list(inspect.signature(function).parameters)
+            if len(args_provided) != len(arg_names):
+                raise CompileError('Expect arguments: %s' % ' '.join(arg_names))
+            args = []
+            for i in range(len(arg_names)):
+                arg_name = arg_names[i]
+                if arg_name == 'register':
+                    value = self._get_register_num(args_provided[i])
+                elif arg_name == 'increment':
+                    value = self._get_increment(args_provided[i])
+                else:
+                    value = args_provided[i]
+                args.append(value)
+            self.instructions.append(Instruction(op, function, args))
+
+    def _read_current(self):
+        if self.current is None:
+            raise RunError('No current value')
+        return self.current
+
+    def _write_current(self, value):
+        if value is None:
+            raise RunError('Current value can not be set to empty')
+        self.current = value
+
+    def _get_register_num(self, reg):
+        try:
+            reg_num = int(reg)
+        except TypeError:
+            raise CompileError('Register is not a number: %s' % reg)
+        if reg_num < 0 or reg_num >= len(self.registers):
+            raise CompileError('Bad register: #%d' % reg_num)
+        return reg_num
+
+    def _get_increment(self, increment):
+        if increment == '-1':
+            return -1
+        if increment == '+1':
+            return 1
+        raise CompileError('BUMP increment must be -1 or +1')
+
+    def _read_register(self, reg_num):
+        value = self.registers[reg_num]
+        if value is None:
+            raise RunError('No value to read from register: #%d' % reg_num)
+        return value
+
+    def _read_register_int(self, reg_num):
+        svalue = self._read_register(reg_num)
+        try:
+            return int(svalue)
+        except ValueError:
+            raise RunError('Value is not an integer: %s' % svalue)
+
+    def _write_register(self, reg_num, value):
+        if value is None:
+            raise RunError('No value to write to register: #%d' % reg_num)
+        self.registers[reg_num] = value
+
+    def _read_inbox(self):
+        if not self.inbox:
+            raise MachineExit('Inbox is empty')
+        return self.inbox.pop(0)
+
+    def _write_outbox(self, value):
+        self.outbox.append(value)
+
+    def _jump(self, location):
+        if location <= 0 or location > len(self.instructions):
+            raise RunError('Bad jump location %d, expect 1-%d' % (location, len(self.instructions)))
+        self.at = location - 1
+
+    def _current_instruction_string(self):
+        return '(%d) %s' % (self.at + 1, str(self.instructions[self.at]))
+
+
+class Solution(object):
+    def __init__(self, name, inbox, outbox, code):
+        self.name = name
+        self.inbox = inbox
+        self.outbox = outbox
+        self.code = code
+
+
+def box_string(box):
+    return '(%s)' % (' '.join([str(item) for item in box]))
+
+
+def test_solution(solution):
+
+    print('=== Solution: %s ===' % solution.name)
+
+    machine = Machine(solution.inbox, solution.code)
+    summary = machine.run()
+
+    if summary:
+        print('-- Summary:')
+        def summarize(label, value):
+            print('%12s: %s' % (label, value))
+        summarize('Instructions', summary.num_instructions)
+        summarize('Steps', summary.num_steps)
+        summarize('Outbox', box_string(summary.outbox))
+        if summary.outbox == solution.outbox:
+            summarize('Result', 'PASSED')
+            return True
+        summarize('Expected', box_string(solution.outbox))
+        summarize('Result', 'FAILED')
+        return False
+
+
+def test(path, names):
+    with open(path) as f:
+        cfg = yaml.load(f)
+    if not names:
+        names = sorted(cfg.keys())
+    for name in names:
+        if name in cfg:
+            sol = cfg[name]
+            # It will be None if the YAML key is empty.
+            if sol is None:
+                sol = {}
+            missing = [key for key in ['inbox', 'outbox', 'code'] if key not in sol]
+            if not missing:
+                inbox = sol['inbox'].split()
+                outbox = sol['outbox'].split()
+                solution = Solution(name, inbox, outbox, sol['code'])
+                return test_solution(solution)
+            else:
+                print('Missing solution key%s: %s'
+                            % ('s' if len(missing) > 1 else '', ' '.join(missing)))
+                return False
+        else:
+            print('Solution not found: %s' % name)
+            return False
+
+
+if __name__ == '__main__':
+    if not sys.argv[1:]:
+        print('Usage: human-resource-machine-tester SCRIPT ...')
+        sys.exit(255)
+    for arg in sys.argv[1:]:
+        components = arg.strip().split(':')
+        if components:
+            test(components[0], components[1:])
