@@ -2,9 +2,18 @@
 
 import sys
 import os
+from argparse import ArgumentParser
 import yaml
 import copy
 import inspect
+import collections
+
+
+# Make YAML use ordered dictionaries so that code blocks are ordered.
+# http://stackoverflow.com/questions/5121931/in-python-how-can-you-load-yaml-mappings-as-ordereddicts
+def dict_constructor(loader, node):
+    return collections.OrderedDict(loader.construct_pairs(node))
+yaml.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, dict_constructor)
 
 
 class CompileError(Exception):
@@ -19,7 +28,13 @@ class MachineExit(Exception):
     pass
 
 
-class Instruction(object):
+class CodeLocation:
+    def __init__(self, block=None, line_index=None):
+        self.block = block
+        self.line_index = line_index
+
+
+class Instruction:
     def __init__(self, op, func, args):
         self.op = op
         self.func = func
@@ -30,57 +45,106 @@ class Instruction(object):
         return ' '.join([self.op] + ['{}'.format(arg) for arg in self.args])
 
 
-class Machine(object):
+def _value_string(value):
+    if type(value) is list or type(value) is tuple:
+        return '({})'.format(' '.join([_value_string(v) for v in value]))
+    return '-' if value is None else '{}'.format(value)
 
-    def __init__(self, inbox, code_lines, trace=True):
+class Machine:
+
+    def __init__(self, inbox, blocks, trace=False):
         self.inbox = copy.copy(inbox)
-        self.code_lines = code_lines
+        self.blocks = blocks
         self.trace = trace
         self.num_steps = 0
         self.registers = [None] * 10
         self.current = None
         self.outbox = []
         self.instructions = []
-        self.at = 0
-        self.compile_line_num = None
-        self.compile_line = None
+        self.compile_location = CodeLocation()
+        self.run_index = 0
 
     def step(self):
         '''
         Execute current instruction.
         Return a Summary object when execution completes or None to continue.
         '''
+        if not self.instructions:
+            raise RunError('No compiled instructions are available.')
         try:
             if self.trace:
+                print('c{}  r{}  i{}  o{}'.format(
+                    _value_string([self.current]),
+                    _value_string(self.registers),
+                    _value_string(self.inbox),
+                    _value_string(self.outbox)))
                 print(self._current_instruction_string())
-            at_save = self.at
-            self.instructions[self.at].execute()
+            run_index_save = self.run_index
+            self.instructions[self.run_index].execute()
             # If it wasn't a jump move to the next instruction.
-            if self.at == at_save:
-                self.at += 1
+            if self.run_index == run_index_save:
+                self.run_index += 1
             self.num_steps += 1
-            if self.at < len(self.instructions):
+            if self.run_index < len(self.instructions):
                 # Keep going
                 return None
         except MachineExit:
             pass
-        class Summary(object):
+        class Summary:
             def __init__(self, outbox, num_instructions, num_steps):
                 self.outbox = copy.copy(outbox)
                 self.num_instructions = num_instructions
                 self.num_steps = num_steps
         return Summary(self.outbox, len(self.instructions), self.num_steps)
 
+    def compile(self, blocks):
+        for self.compile_location.block in blocks:
+            block = self.compile_location.block
+            print('%s:' % block.label)
+            for self.compile_location.line_index in range(len(block.lines)):
+                line = block.lines[self.compile_location.line_index]
+                fields = line.split()
+                op = fields[0].upper()
+                args_provided = fields[1:]
+                cls = self.__class__
+                function = getattr(self, op, None)
+                if not function:
+                    raise CompileError('Bad operation: %s' % op)
+                arg_names = list(inspect.signature(function).parameters)
+                if len(args_provided) != len(arg_names):
+                    raise CompileError('Expect arguments: %s' % ' '.join(arg_names))
+                args = []
+                for i in range(len(arg_names)):
+                    arg_name = arg_names[i]
+                    if arg_name == 'register':
+                        value = self._get_register_num(args_provided[i])
+                    elif arg_name == 'increment':
+                        value = self._get_increment(args_provided[i])
+                    elif arg_name == 'location':
+                        value = self._get_location(args_provided[i])
+                    else:
+                        value = args_provided[i]
+                    args.append(value)
+                instruction = Instruction(op, function, args)
+                self.instructions.append(instruction)
+                print(self._instruction_trace_string(len(self.instructions), instruction))
+
     def run(self):
         try:
-            self._compile(self.code_lines)
+            if not self.instructions:
+                print('Compiling...')
+                self.compile(self.blocks)
+            print('Running...')
             while True:
                 summary = self.step()
                 if summary:
                     return summary
         except CompileError as e:
-            print('COMPILE ERROR at line #%d "%s": %s' % (
-                        self.compile_line_num, self.compile_line, str(e)))
+            print('COMPILE ERROR at %s:%d "%s": %s' % (
+                        self.compile_block.label,
+                        self.compile_block_line_num + 1,
+                        self.compile_block.lines[self.compile_block_line_num],
+                        str(e)))
         except RunError as e:
             print('RUN ERROR: %s: %s' % (str(e), self._current_instruction_string()))
 
@@ -100,10 +164,10 @@ class Machine(object):
         self._write_current(self._read_register(register))
 
     def ADD(self, register):
-        self._write_current(self._read_current() + self._read_register_int(register))
+        self._write_current(self._read_current_int() + self._read_register_int(register))
 
     def SUB(self, register):
-        self._write_current(self._read_current() - self._read_register_int(register))
+        self._write_current(self._read_current_int() - self._read_register_int(register))
 
     def BUMP(self, increment, register):
         self._write_register(register, self._read_register_int(register) + increment)
@@ -112,51 +176,30 @@ class Machine(object):
         self._jump(location)
 
     def JUMP_IF_ZERO(self, location):
-        if self._read_current() == 0:
+        if self._read_current_int() == 0:
             self._jump(location)
 
     def JUMP_IF_NEGATIVE(self, location):
-        if self._read_current() < 0:
+        if self._read_current_int() < 0:
             self._jump(location)
 
     ### Private
-
-    def _compile(self, code_lines):
-        self.compile_line_num = 0
-        for self.compile_line in code_lines:
-            print(self.compile_line)
-            self.compile_line_num += 1
-            fields = self.compile_line.split()
-            op = fields[0].upper()
-            args_provided = fields[1:]
-            cls = self.__class__
-            function = getattr(self, op, None)
-            if not function:
-                raise CompileError('Bad operation: %s' % op)
-            arg_names = list(inspect.signature(function).parameters)
-            if len(args_provided) != len(arg_names):
-                raise CompileError('Expect arguments: %s' % ' '.join(arg_names))
-            args = []
-            for i in range(len(arg_names)):
-                arg_name = arg_names[i]
-                if arg_name == 'register':
-                    value = self._get_register_num(args_provided[i])
-                elif arg_name == 'increment':
-                    value = self._get_increment(args_provided[i])
-                else:
-                    value = args_provided[i]
-                args.append(value)
-            self.instructions.append(Instruction(op, function, args))
 
     def _read_current(self):
         if self.current is None:
             raise RunError('No current value')
         return self.current
 
+    def _read_current_int(self):
+        try:
+            return int(self._read_current())
+        except ValueError:
+            raise RunError('Current value is not an integer')
+
     def _write_current(self, value):
         if value is None:
             raise RunError('Current value can not be set to empty')
-        self.current = value
+        self.current = '{}'.format(value)
 
     def _get_register_num(self, reg):
         try:
@@ -174,6 +217,14 @@ class Machine(object):
             return 1
         raise CompileError('BUMP increment must be -1 or +1')
 
+    def _get_location(self, label):
+        line_index = 0
+        for block in self.blocks:
+            if block.label == label:
+                return line_index + 1
+            line_index += len(block.lines)
+        raise CompileError('Unknown block label "%s"' % label)
+
     def _read_register(self, reg_num):
         value = self.registers[reg_num]
         if value is None:
@@ -190,7 +241,7 @@ class Machine(object):
     def _write_register(self, reg_num, value):
         if value is None:
             raise RunError('No value to write to register: #%d' % reg_num)
-        self.registers[reg_num] = value
+        self.registers[reg_num] = '{}'.format(value)
 
     def _read_inbox(self):
         if not self.inbox:
@@ -203,29 +254,42 @@ class Machine(object):
     def _jump(self, location):
         if location <= 0 or location > len(self.instructions):
             raise RunError('Bad jump location %d, expect 1-%d' % (location, len(self.instructions)))
-        self.at = location - 1
+        self.run_index = location - 1
 
     def _current_instruction_string(self):
-        return '(%d) %s' % (self.at + 1, str(self.instructions[self.at]))
+        instruction = self.instructions[self.run_index]
+        return self._instruction_trace_string(self.run_index + 1, instruction)
+
+    @classmethod
+    def _instruction_trace_string(cls, line_num, instruction):
+        sline_num = '(%d)' % line_num
+        sargs = ' '.join(['{}'.format(arg) for arg in instruction.args])
+        return '%6s %s %s' % (sline_num, instruction.op, sargs)
 
 
-class Solution(object):
-    def __init__(self, name, inbox, outbox, code):
+class Solution:
+    def __init__(self, name, inbox, outbox, blocks):
         self.name = name
         self.inbox = inbox
         self.outbox = outbox
-        self.code = code
+        self.blocks = blocks
+
+
+class CodeBlock:
+    def __init__(self, label, lines):
+        self.label = label
+        self.lines = lines
 
 
 def box_string(box):
     return '(%s)' % (' '.join([str(item) for item in box]))
 
 
-def test_solution(solution):
+def test_solution(solution, trace=False):
 
     print('=== Solution: %s ===' % solution.name)
 
-    machine = Machine(solution.inbox, solution.code)
+    machine = Machine(solution.inbox, solution.blocks, trace=trace)
     summary = machine.run()
 
     if summary:
@@ -243,7 +307,7 @@ def test_solution(solution):
         return False
 
 
-def test(path, names):
+def test(path, names, trace):
     with open(path) as f:
         cfg = yaml.load(f)
     if not names:
@@ -258,8 +322,12 @@ def test(path, names):
             if not missing:
                 inbox = sol['inbox'].split()
                 outbox = sol['outbox'].split()
-                solution = Solution(name, inbox, outbox, sol['code'])
-                return test_solution(solution)
+                # Code must be a series of labeled lists
+                blocks = []
+                for label in sol['code']:
+                    blocks.append(CodeBlock(label, sol['code'][label]))
+                solution = Solution(name, inbox, outbox, blocks)
+                return test_solution(solution, trace=trace)
             else:
                 print('Missing solution key%s: %s'
                             % ('s' if len(missing) > 1 else '', ' '.join(missing)))
@@ -270,10 +338,12 @@ def test(path, names):
 
 
 if __name__ == '__main__':
-    if not sys.argv[1:]:
-        print('Usage: human-resource-machine-tester SCRIPT ...')
-        sys.exit(255)
-    for arg in sys.argv[1:]:
-        components = arg.strip().split(':')
+    parser = ArgumentParser(description='Compile and run Human Resource Machine programs.')
+    parser.add_argument('-t', '--trace', dest='trace', action='store_true',
+                        default=False, help='trace execution')
+    parser.add_argument(dest='targets', nargs='+', help='target path[:label1[:label2...]]')
+    args = parser.parse_args()
+    for target in args.targets:
+        components = target.strip().split(':')
         if components:
-            test(components[0], components[1:])
+            test(components[0], components[1:], args.trace)
