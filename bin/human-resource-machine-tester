@@ -16,7 +16,13 @@ def dict_constructor(loader, node):
 yaml.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, dict_constructor)
 
 
+NUM_REGISTERS = 10
+
 class CompileError(Exception):
+    pass
+
+
+class CompilerInternalError(Exception):
     pass
 
 
@@ -24,14 +30,68 @@ class RunError(Exception):
     pass
 
 
-class MachineExit(Exception):
+class InboxEmpty(Exception):
     pass
 
 
-class CodeLocation:
-    def __init__(self, block=None, line_index=None):
-        self.block = block
-        self.line_index = line_index
+def _instruction_trace_string(line_num, instruction):
+    sline_num = '(%d)' % line_num
+    sargs = ' '.join(['{}'.format(arg) for arg in instruction.args])
+    return '%6s %s %s' % (sline_num, instruction.op, sargs)
+
+
+class InstructionSet:
+
+    @staticmethod
+    def INBOX(machine_state):
+        machine_state.write_current(machine_state.read_inbox())
+
+    @staticmethod
+    def OUTBOX(machine_state):
+        machine_state.write_outbox(machine_state.read_current())
+        machine_state.clear_current()
+
+    @staticmethod
+    def COPY_TO(machine_state, register):
+        machine_state.write_register(register, machine_state.read_current())
+
+    @staticmethod
+    def COPY_FROM(machine_state, register):
+        machine_state.write_current(machine_state.read_register(register))
+
+    @staticmethod
+    def ADD(machine_state, register):
+        machine_state.write_current(
+            machine_state.read_current_int() + machine_state.read_register_int(register))
+
+    @staticmethod
+    def SUB(machine_state, register):
+        machine_state.write_current(
+            machine_state.read_current_int() - machine_state.read_register_int(register))
+
+    @staticmethod
+    def BUMP(machine_state, increment, register):
+        machine_state.write_register(register,
+            machine_state.read_register_int(register) + increment)
+
+    @staticmethod
+    def JUMP(machine_state, location):
+        machine_state.jump_to_location(location)
+
+    @staticmethod
+    def JUMP_IF_ZERO(machine_state, location):
+        if machine_state.read_current_int() == 0:
+            machine_state.jump_to_location(location)
+
+    @staticmethod
+    def JUMP_IF_NEGATIVE(machine_state, location):
+        if machine_state.read_current_int() < 0:
+            machine_state.jump_to_location(location)
+
+
+class Program:
+    def __init__(self):
+        self.instructions = []
 
 
 class Instruction:
@@ -39,174 +99,88 @@ class Instruction:
         self.op = op
         self.func = func
         self.args = args
-    def execute(self):
-        return self.func(*self.args)
+    def execute(self, machine_state):
+        return self.func(machine_state, *self.args)
     def __str__(self):
         return ' '.join([self.op] + ['{}'.format(arg) for arg in self.args])
 
 
-def _value_string(value):
-    if type(value) is list or type(value) is tuple:
-        return '({})'.format(' '.join([_value_string(v) for v in value]))
-    return '-' if value is None else '{}'.format(value)
+class CompilerState:
+    def __init__(self):
+        self.block = None
+        self.line_index = None
 
-class Machine:
 
-    def __init__(self, inbox, blocks, trace=False):
-        self.inbox = copy.copy(inbox)
+class Compiler:
+
+    def __init__(self, num_registers, instruction_set, blocks):
+        self.num_registers = num_registers
+        self.instruction_set = instruction_set
         self.blocks = blocks
-        self.trace = trace
-        self.num_steps = 0
-        self.registers = [None] * 10
-        self.current = None
-        self.outbox = []
-        self.instructions = []
-        self.compile_location = CodeLocation()
-        self.run_index = 0
+        self.state = CompilerState()
+        self.program = Program()
 
-    def step(self):
-        '''
-        Execute current instruction.
-        Return a Summary object when execution completes or None to continue.
-        '''
-        if not self.instructions:
-            raise RunError('No compiled instructions are available.')
+    def compile(self):
         try:
-            if self.trace:
-                print('c{}  r{}  i{}  o{}'.format(
-                    _value_string([self.current]),
-                    _value_string(self.registers),
-                    _value_string(self.inbox),
-                    _value_string(self.outbox)))
-                print(self._current_instruction_string())
-            run_index_save = self.run_index
-            self.instructions[self.run_index].execute()
-            # If it wasn't a jump move to the next instruction.
-            if self.run_index == run_index_save:
-                self.run_index += 1
-            self.num_steps += 1
-            if self.run_index < len(self.instructions):
-                # Keep going
-                return None
-        except MachineExit:
-            pass
-        class Summary:
-            def __init__(self, outbox, num_instructions, num_steps):
-                self.outbox = copy.copy(outbox)
-                self.num_instructions = num_instructions
-                self.num_steps = num_steps
-        return Summary(self.outbox, len(self.instructions), self.num_steps)
-
-    def compile(self, blocks):
-        for self.compile_location.block in blocks:
-            block = self.compile_location.block
-            print('%s:' % block.label)
-            for self.compile_location.line_index in range(len(block.lines)):
-                line = block.lines[self.compile_location.line_index]
-                fields = line.split()
-                op = fields[0].upper()
-                args_provided = fields[1:]
-                cls = self.__class__
-                function = getattr(self, op, None)
-                if not function:
-                    raise CompileError('Bad operation: %s' % op)
-                arg_names = list(inspect.signature(function).parameters)
-                if len(args_provided) != len(arg_names):
-                    raise CompileError('Expect arguments: %s' % ' '.join(arg_names))
-                args = []
-                for i in range(len(arg_names)):
-                    arg_name = arg_names[i]
-                    if arg_name == 'register':
-                        value = self._get_register_num(args_provided[i])
-                    elif arg_name == 'increment':
-                        value = self._get_increment(args_provided[i])
-                    elif arg_name == 'location':
-                        value = self._get_location(args_provided[i])
-                    else:
-                        value = args_provided[i]
-                    args.append(value)
-                instruction = Instruction(op, function, args)
-                self.instructions.append(instruction)
-                print(self._instruction_trace_string(len(self.instructions), instruction))
-
-    def run(self):
-        try:
-            if not self.instructions:
-                print('Compiling...')
-                self.compile(self.blocks)
-            print('Running...')
-            while True:
-                summary = self.step()
-                if summary:
-                    return summary
+            for self.state.block in self.blocks:
+                self._compile_current_block()
         except CompileError as e:
-            print('COMPILE ERROR at %s:%d "%s": %s' % (
-                        self.compile_block.label,
-                        self.compile_block_line_num + 1,
-                        self.compile_block.lines[self.compile_block_line_num],
+            print('COMPILE ERROR at %s.%d "%s": %s' % (
+                        self.state.block.label,
+                        self.state.line_index + 1,
+                        self.state.block.lines[self.state.line_index],
                         str(e)))
-        except RunError as e:
-            print('RUN ERROR: %s: %s' % (str(e), self._current_instruction_string()))
+            return None
+        except CompilerInternalError as e:
+            print('COMPILER INTERNAL ERROR at %s.%d "%s": %s' % (
+                        self.state.block.label,
+                        self.state.line_index + 1,
+                        self.state.block.lines[self.state.line_index],
+                        str(e)))
+            return None
+        return self.program
 
-    ### Operations - raise MachineExit to exit
+    def _compile_current_block(self):
+        block = self.state.block
+        print('%s:' % block.label)
+        for self.state.line_index in range(len(block.lines)):
+            self._compile_line(block.lines[self.state.line_index])
 
-    def INBOX(self):
-        self._write_current(self._read_inbox())
-
-    def OUTBOX(self):
-        self._write_outbox(self._read_current())
-        self.current = None
-
-    def COPY_TO(self, register):
-        self._write_register(register, self._read_current())
-
-    def COPY_FROM(self, register):
-        self._write_current(self._read_register(register))
-
-    def ADD(self, register):
-        self._write_current(self._read_current_int() + self._read_register_int(register))
-
-    def SUB(self, register):
-        self._write_current(self._read_current_int() - self._read_register_int(register))
-
-    def BUMP(self, increment, register):
-        self._write_register(register, self._read_register_int(register) + increment)
-
-    def JUMP(self, location):
-        self._jump(location)
-
-    def JUMP_IF_ZERO(self, location):
-        if self._read_current_int() == 0:
-            self._jump(location)
-
-    def JUMP_IF_NEGATIVE(self, location):
-        if self._read_current_int() < 0:
-            self._jump(location)
-
-    ### Private
-
-    def _read_current(self):
-        if self.current is None:
-            raise RunError('No current value')
-        return self.current
-
-    def _read_current_int(self):
-        try:
-            return int(self._read_current())
-        except ValueError:
-            raise RunError('Current value is not an integer')
-
-    def _write_current(self, value):
-        if value is None:
-            raise RunError('Current value can not be set to empty')
-        self.current = '{}'.format(value)
+    def _compile_line(self, line):
+        fields = line.split()
+        op = fields[0].upper()
+        compile_args = fields[1:]
+        function = getattr(self.instruction_set, op, None)
+        if not function:
+            raise CompileError('Bad operation: %s' % op)
+        signature_args = [key for key in inspect.signature(function).parameters]
+        if not signature_args or signature_args[0] != 'machine_state':
+            raise CompilerInternalError(
+                'Instruction set first parameter must be "machine_state"')
+        if len(compile_args) != len(signature_args) - 1:
+            raise CompileError('Expect argument(s): %s' % ' '.join(signature_args[1:]))
+        args = []
+        for i in range(len(signature_args) - 1):
+            arg_name = signature_args[i + 1]
+            if arg_name == 'register':
+                value = self._get_register_num(compile_args[i])
+            elif arg_name == 'increment':
+                value = self._get_increment(compile_args[i])
+            elif arg_name == 'location':
+                value = self._get_location(compile_args[i])
+            else:
+                value = compile_args[i]
+            args.append(value)
+        instruction = Instruction(op, function, args)
+        self.program.instructions.append(instruction)
+        print(_instruction_trace_string(len(self.program.instructions), instruction))
 
     def _get_register_num(self, reg):
         try:
             reg_num = int(reg)
         except TypeError:
             raise CompileError('Register is not a number: %s' % reg)
-        if reg_num < 0 or reg_num >= len(self.registers):
+        if reg_num < 0 or reg_num >= self.num_registers:
             raise CompileError('Bad register: #%d' % reg_num)
         return reg_num
 
@@ -225,46 +199,141 @@ class Machine:
             line_index += len(block.lines)
         raise CompileError('Unknown block label "%s"' % label)
 
-    def _read_register(self, reg_num):
+
+class MachineState:
+
+    def __init__(self, program, inbox, num_registers):
+        self.program = program
+        self.current_value = None
+        self.inbox = copy.copy(inbox)
+        self.outbox = []
+        self.registers = [None] * num_registers
+        self.instruction_index = 0
+        self.step_counter = 0
+        self.instruction_index_before = None
+
+    def read_current(self):
+        if self.current_value is None:
+            raise RunError('No current value')
+        return self.current_value
+
+    def read_current_int(self):
+        try:
+            return int(self.read_current())
+        except ValueError:
+            raise RunError('Current value is not an integer')
+
+    def write_current(self, value):
+        if value is None:
+            raise RunError('Current value can not be set to empty')
+        self.current_value = '{}'.format(value)
+
+    def clear_current(self):
+        self.current_value = None
+
+    def read_register(self, reg_num):
         value = self.registers[reg_num]
         if value is None:
             raise RunError('No value to read from register: #%d' % reg_num)
         return value
 
-    def _read_register_int(self, reg_num):
-        svalue = self._read_register(reg_num)
+    def read_register_int(self, reg_num):
+        svalue = self.read_register(reg_num)
         try:
             return int(svalue)
         except ValueError:
             raise RunError('Value is not an integer: %s' % svalue)
 
-    def _write_register(self, reg_num, value):
+    def write_register(self, reg_num, value):
         if value is None:
             raise RunError('No value to write to register: #%d' % reg_num)
         self.registers[reg_num] = '{}'.format(value)
 
-    def _read_inbox(self):
+    def read_inbox(self):
         if not self.inbox:
-            raise MachineExit('Inbox is empty')
+            self.finish()
+            raise InboxEmpty('Inbox is empty')
         return self.inbox.pop(0)
 
-    def _write_outbox(self, value):
+    def write_outbox(self, value):
         self.outbox.append(value)
 
-    def _jump(self, location):
-        if location <= 0 or location > len(self.instructions):
-            raise RunError('Bad jump location %d, expect 1-%d' % (location, len(self.instructions)))
-        self.run_index = location - 1
+    def jump_to_location(self, location):
+        if location <= 0 or location > len(self.program.instructions):
+            raise RunError('Bad jump location %d, expect 1-%d' % (location, len(self.program.instructions)))
+        self.instruction_index = location - 1
 
-    def _current_instruction_string(self):
-        instruction = self.instructions[self.run_index]
-        return self._instruction_trace_string(self.run_index + 1, instruction)
+    def before_instruction(self):
+        self.instruction_index_before = self.instruction_index
+
+    def after_instruction(self):
+        # If it wasn't a jump move to the next instruction.
+        if self.instruction_index == self.instruction_index_before:
+            self.instruction_index += 1
+        self.step_counter += 1
+
+    def finish(self):
+        self.instruction_index = len(self.program.instructions)
+
+    def running(self):
+        return self.instruction_index < len(self.program.instructions)
+
+    def trace_string(self):
+        return 'c({})  r{}  i{}  o{}'.format(
+            self.value_string(self.current_value),
+            self.value_string(self.registers),
+            self.value_string(self.inbox),
+            self.value_string(self.outbox))
 
     @classmethod
-    def _instruction_trace_string(cls, line_num, instruction):
-        sline_num = '(%d)' % line_num
-        sargs = ' '.join(['{}'.format(arg) for arg in instruction.args])
-        return '%6s %s %s' % (sline_num, instruction.op, sargs)
+    def value_string(cls, value):
+        if type(value) is list or type(value) is tuple:
+            return '({})'.format(' '.join([cls.value_string(v) for v in value]))
+        return '-' if value is None else '{}'.format(value)
+
+    def current_instruction(self):
+        return self.program.instructions[self.instruction_index]
+
+    def current_instruction_string(self):
+        return _instruction_trace_string(self.instruction_index + 1, self.current_instruction())
+
+    def get_summary(self):
+        class Summary:
+            def __init__(self, outbox, num_instructions, step_counter):
+                self.outbox = copy.copy(outbox)
+                self.num_instructions = num_instructions
+                self.step_counter = step_counter
+        return Summary(self.outbox, len(self.program.instructions), self.step_counter)
+
+
+class Machine:
+
+    def __init__(self, inbox, num_registers, instruction_set, program, trace=False):
+        self.instruction_set = instruction_set
+        self.trace = trace
+        self.state = MachineState(program, inbox, num_registers)
+
+    def step(self):
+        '''
+        Execute current instruction, return Summary object when done or None to continue.
+        '''
+        try:
+            if self.trace:
+                print(self.state.trace_string())
+                print(self.state.current_instruction_string())
+            self.state.before_instruction()
+            self.state.current_instruction().execute(self.state)
+            self.state.after_instruction()
+        except InboxEmpty:
+            pass
+
+    def run(self):
+        try:
+            while self.state.running():
+                self.step()
+            return self.state.get_summary()
+        except RunError as e:
+            print('RUN ERROR: %s: %s' % (str(e), self.state.current_instruction_string()))
 
 
 class Solution:
@@ -289,7 +358,14 @@ def test_solution(solution, trace=False):
 
     print('=== Solution: %s ===' % solution.name)
 
-    machine = Machine(solution.inbox, solution.blocks, trace=trace)
+    print('Compiling...')
+    compiler = Compiler(NUM_REGISTERS, InstructionSet, solution.blocks)
+    program = compiler.compile()
+    if not program:
+        return False
+
+    print('Running...')
+    machine = Machine(solution.inbox, NUM_REGISTERS, InstructionSet, program, trace=trace)
     summary = machine.run()
 
     if summary:
@@ -297,7 +373,7 @@ def test_solution(solution, trace=False):
         def summarize(label, value):
             print('%12s: %s' % (label, value))
         summarize('Instructions', summary.num_instructions)
-        summarize('Steps', summary.num_steps)
+        summarize('Steps', summary.step_counter)
         summarize('Outbox', box_string(summary.outbox))
         if summary.outbox == solution.outbox:
             summarize('Result', 'PASSED')
