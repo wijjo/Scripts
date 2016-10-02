@@ -64,7 +64,8 @@ from lib import import_scriptbase
 from scriptbase import cli
 from scriptbase import console
 from scriptbase.configuration import ConfigSpec, Config
-from scriptbase import utility
+from scriptbase import disk
+from scriptbase import shell
 
 
 #=== Non-configurable globals ==================================================
@@ -76,7 +77,7 @@ PROGRAM_DIR, PROGRAM_NAME = os.path.split(os.path.realpath(sys.argv[0]))
 SIMPLE_CP_PLATFORMS = ['darwin']
 
 # Display progress with "pv", if available.
-PV_AVAILABLE = utility.find_executable('pv')
+PV_AVAILABLE = shell.find_executable('pv')
 
 ARCHIVE_NAME_GLOB = '"%s"-[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]*'
 
@@ -170,22 +171,22 @@ CONFIG = Config('.%(PROGRAM_NAME)src' % globals(),
     ),
     ConfigSpec(
         'REPLACEMENT_GZIP',
-        utility.find_executable('pigz'),
+        shell.find_executable('pigz'),
         'Compatible gzip replacement. By default pigz is used when available.'
     ),
     ConfigSpec(
         'REPLACEMENT_BZIP2',
-        utility.find_executable('pbzip2', 'lbzip2'),
+        shell.find_executable('pbzip2', 'lbzip2'),
         'Compatible bzip2 replacement. By default pbzip2 or lbzip2 are used when available.'
     ),
     ConfigSpec(
         'REPLACEMENT_XZ',
-        utility.find_executable('pxz', 'pixz'),
+        shell.find_executable('pxz', 'pixz'),
         'Compatible xz replacement. By default pxz or pixz are used when available.'
     ),
     ConfigSpec(
         'REPLACEMENT_LZIP',
-        utility.find_executable('plzip'),
+        shell.find_executable('plzip'),
         'Compatible lzip replacement. By default plzip is used when available.'
     ),
     ConfigSpec(
@@ -373,7 +374,7 @@ class ArchiveTarball(ArchiveItem):
         batch.run()
 
     def restore(self):
-        dir = utility.get_versioned_path(os.path.basename(self.path)[:-len(self.tar_extension)])
+        dir = disk.get_versioned_path(os.path.basename(self.path)[:-len(self.tar_extension)])
         os.mkdir(dir)
         console.info('Restoring to "%s"...' % dir)
         os.system('tar %s "%s" --strip-components 1 -C "%s"'
@@ -532,7 +533,7 @@ class ArchiveDirectory(ArchiveItem):
         batch.run()
 
     def restore(self):
-        target = utility.get_versioned_path(self.path)
+        target = disk.get_versioned_path(self.path)
         batch = CommandBatch(dryrun=self.dryrun)
         batch.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(target))
         console.info('Restoring to "%s"...' % target)
@@ -562,7 +563,7 @@ class ArchiveFile(ArchiveItem):
         batch.run()
 
     def restore(self, path):
-        target = utility.get_versioned_path(self.path)
+        target = disk.get_versioned_path(self.path)
         batch = CommandBatch(dryrun=self.dryrun)
         batch.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(target))
         console.info('Restoring to "%s"...' % target)
@@ -590,7 +591,7 @@ class FMFactory(object):
 
 #===============================================================================
 
-def choose(name, **kwargs):
+def choose_archive(name, **kwargs):
 
     if not os.path.isdir(CONFIG.data.OUTPUT_DIRECTORY):
         console.abort('No %s directory exists' % CONFIG.data.OUTPUT_DIRECTORY)
@@ -608,7 +609,7 @@ def choose(name, **kwargs):
     console.info('')
     path = None
     while path is None:
-        i = int(utility.prompt_re('Select archive (1-n [none])', NUMBER_WITH_DEFAULT_RE, '0'))
+        i = int(console.prompt_re('Select archive (1-n [none])', NUMBER_WITH_DEFAULT_RE, '0'))
         if i <= 0:
             console.abort('Canceled')
         if i-1 < len(archives):
@@ -755,7 +756,7 @@ def _p7zip(runner):
 def _get(runner):
     read_configs(runner)
     for name in files:
-        (path, fm) = choose(name, **cmdargs_to_kwargs(runner.cmdargs))
+        (path, fm) = choose_archive(name, **cmdargs_to_kwargs(runner.cmdargs))
         fm.restore(path)
 
 
@@ -771,7 +772,7 @@ def _get(runner):
 def _compare(runner):
     read_configs(runner)
     for name in files:
-        (path, fm) = choose(name, **cmdargs_to_kwargs(runner.cmdargs))
+        (path, fm) = choose_archive(name, **cmdargs_to_kwargs(runner.cmdargs))
         fm.compare(path)
 
 

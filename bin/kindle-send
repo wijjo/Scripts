@@ -3,22 +3,20 @@
 import sys, os, smtplib, email, imp
 
 from lib import import_scriptbase
-import scriptbase.utility as utility
 
 
 CONFIG_PATH = os.path.expanduser(os.path.join('~', '.kindle-send.py'))
 
 if not os.path.exists(CONFIG_PATH):
     print '"%s" missing - generating a sample...' % CONFIG_PATH
-    filetool = utility.FileTool(expandvars=True)
-    filetool.save(CONFIG_PATH, '''\
+    with open(CONFIG_PATH, 'w') as f:
+        f.write('''\
 # These are sample values. Please customize for your needs.
 to_addr = "LOGNAME@free.kindle.com"
 from_addr = "LOGNAME@example.com"
 smtp_user = "LOGNAME@example.com"
 smtp_password = "password"
-'''
-)
+''')
     sys.exit(1)
 
 sys.dont_write_bytecode = True
