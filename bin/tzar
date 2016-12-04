@@ -181,8 +181,8 @@ CONFIG = Config('.%(PROGRAM_NAME)src' % globals(),
     ),
     ConfigSpec(
         'REPLACEMENT_XZ',
-        shell.find_executable('pxz', 'pixz'),
-        'Compatible xz replacement. By default pxz or pixz are used when available.'
+        shell.find_executable('xz'),
+        'Use xz as an external program to benefit from its multi-threading.'
     ),
     ConfigSpec(
         'REPLACEMENT_LZIP',
@@ -199,19 +199,22 @@ CONFIG = Config('.%(PROGRAM_NAME)src' % globals(),
 
 #===============================================================================
 
-def quote_args(*args):
+def quote_arg(*args):
     return '"%s"' % ''.join([s.replace('"', '\\"') for s in args])
 
 
 #===============================================================================
 
 class CommandBatch(object):
+    class Failure(Exception):
+        def __init__(self, rc):
+            Exception.__init__(self, 'Command batch failed with return code %d' % rc)
     def __init__(self, echo=False, dryrun=False):
         self.echo   = echo
         self.dryrun = dryrun
         self.cmds   = []
         self.cur    = 0
-    def append(self, *cmd):
+    def add_command(self, *cmd):
         self.cmds.append(list(cmd))
         self.cur = len(self.cmds) - 1
         return self.cur
@@ -223,7 +226,7 @@ class CommandBatch(object):
         self.cur = pos
     def add_args(self, *args):
         assert self.cur >= 0 and self.cur < len(self.cmds)
-        self.cmds[self.cur].extend(args)
+        self.cmds[self.cur].extend([arg for arg in args if arg is not None])
     def run(self):
         for cmd in self.cmds:
             scmd = ' '.join(cmd)
@@ -232,12 +235,64 @@ class CommandBatch(object):
             elif self.echo:
                 console.info(scmd)
             if not self.dryrun:
-                os.system(scmd)
+                rc = os.system(scmd)
+                if rc != 0:
+                    raise CommandBatch.Failure(rc)
 
 
 #===============================================================================
 
 class ArchiveItem(object):
+
+    class Batch(CommandBatch):
+
+        def __init__(self, item):
+            self.item = item
+            CommandBatch.__init__(self, dryrun=item.dryrun)
+
+        def add_exclude_args(self, option):
+            def add_excludes(excludes, test=None, leader='', trailer=''):
+                if test is None or test:
+                    for exclude in excludes:
+                        # Don't separate by whitespace when the option ends with '=' or '!', e.g. P7Zip.
+                        if option[-1] in ('!', '='):
+                            self.add_args(quote_arg(option, leader, exclude, trailer))
+                        else:
+                            self.add_args(option, quote_arg(leader, exclude, trailer))
+            add_excludes(CONFIG.data.BINARY_PATTERNS, test=self.item.ignoreobj)
+            add_excludes(CONFIG.data.VCS_DIRECTORIES, test=self.item.ignorevcs, leader='*/', trailer='/*')
+            add_excludes(self.item.excludes)
+
+        def add_metered_redirection_args(self, output_path):
+            quoted_input  = quote_arg(self.item.path)
+            quoted_output = quote_arg(output_path)
+            if PV_AVAILABLE and not self.item.noprogress:
+                self.add_args('-', quoted_input, '|', 'pv', '-rbt', '>', quoted_output)
+                self.insert('echo', quote_arg('Creating "', quoted_output, '"...'))
+            else:
+                self.add_args(quoted_output, quoted_input)
+
+        def add_move_command(self, src, dst):
+            self.add_command('mv', '-v', quote_arg(src), quote_arg(dst))
+
+        def add_copy_command(self, src, dst):
+            self.add_command(CONFIG.data.COPY_COMMAND, quote_arg(src), quote_arg(dst))
+
+        def add_move_or_copy_archive_command(self):
+            if self.item.delete:
+                self.add_move_command(self.item.path, self.item.archive)
+            else:
+                self.add_copy_command(self.item.path, self.item.archive)
+
+        def add_compression_command(self, path):
+            self.add_command(self.item.compression, quote_arg(path))
+
+        def add_archive_compression_command(self):
+            self.add_compression_command(self.item.archive)
+
+        def add_cleanup(self):
+            if self.item.delete:
+                batch.add_command('rm', '-rvf', quote_arg(self.item.path))
 
     def __init__(self, path,
                  dryrun=False,
@@ -249,7 +304,7 @@ class ArchiveItem(object):
                  ignorevcs=False,
                  noprogress=False,
                  outputdir=None):
-        self.path        = path
+        self.path        = os.path.normpath(path)
         self.dryrun      = dryrun
         self.pause       = pause
         self.verbose     = verbose
@@ -280,13 +335,30 @@ class ArchiveItem(object):
             except (IOError, OSError) as e:
                 console.abort('Unable to create output directory', self.outputdir, e)
 
+    def compare(self):
+        return self._perform('compare')
+
+    def create(self):
+        return self._perform('create')
+
+    def restore(self):
+        return self._perform('restore')
+
+    def _perform(self, name):
+        perform_method = getattr(self, 'build_%s_batch' % name)
+        if not perform_method:
+            console.abort('%s has no "%s" method.' % (self.__class__.__name__, name))
+        batch = ArchiveItem.Batch(self)
+        perform_method(batch)
+        return batch.run()
+
 
 #===============================================================================
 
 class ArchiveTarball(ArchiveItem):
 
     @staticmethod
-    def forPath(path, **kwargs):
+    def archive_for_path(path, **kwargs):
         m = TARBALL_TRAILER_RE.match(path)
         if m is None or m.group(3) != '.tar':
             return None
@@ -306,18 +378,20 @@ class ArchiveTarball(ArchiveItem):
             self.tar_compression_options = 'j'
             self.tar_extension = '.tar.bz2'
         elif self.compression == 'xz':
-            if  'XZ_OPTS' in os.environ:
-                os.environ['XZ_OPTS'] = '%s --threads=0' % os.environ['XZ_OPTS']
+            # xz has a threading
+            if  'XZ_OPT' in os.environ:
+                os.environ['XZ_OPT'] = '%s --threads=0' % os.environ['XZ_OPT']
             else:
-                os.environ['XZ_OPTS'] = '--threads=0'
+                os.environ['XZ_OPT'] = '--threads=0'
             self.tar_compression_options = 'J'
             self.external_compression_program = CONFIG.data.REPLACEMENT_XZ
             self.tar_extension = '.tar.xz'
         elif self.compression == 'lzip':
-            if  'LZ_OPTS' in os.environ:
-                os.environ['LZ_OPTS'] = '%s --threads=0' % os.environ['LZ_OPTS']
+            # does this work for lzip, like xz?
+            if  'LZ_OPT' in os.environ:
+                os.environ['LZ_OPT'] = '%s --threads=0' % os.environ['LZ_OPT']
             else:
-                os.environ['LZ_OPTS'] = '--threads=0'
+                os.environ['LZ_OPT'] = '--threads=0'
             self.tar_compression_options = None
             self.external_compression_program = CONFIG.data.REPLACEMENT_LZIP
             self.tar_extension = '.tar.lz'
@@ -338,50 +412,24 @@ class ArchiveTarball(ArchiveItem):
         self.tar_restore_options = '-%s%s%s' % ('x', self.tar_compression_options, 'pf')
         self.tar_compare_options = '-%s%s%s' % ('d', self.tar_compression_options, 'f')
 
-    def create(self):
-        batch = CommandBatch(dryrun=self.dryrun)
-        batch.append('tar')
-        # Add object file exclusions?
-        if self.ignoreobj:
-            for pat in CONFIG.data.BINARY_PATTERNS:
-                batch.add_args('--exclude', quote_args(pat))
-        # Add VCS exclusions?
-        if self.ignorevcs:
-            for pat in CONFIG.data.VCS_DIRECTORIES:
-                batch.add_args('--exclude', quote_args('*/', pat, '/*'))
-        # Add other exclusions?
-        for exclude in self.excludes:
-            batch.add_args('--exclude', quote_args(exclude))
-        # Add tar options based on compression type
+    def build_create_batch(self, batch):
+        batch.add_command('tar')
+        batch.add_exclude_args('--exclude')
         batch.add_args(*self.tar_create_options)
-        # Complete command line for running with or without pv
-        if PV_AVAILABLE and not self.noprogress:
-            batch.add_args('-',
-                            quote_args(self.path),
-                            '|',
-                            'pv',
-                            '-rbt',
-                            '>',
-                            quote_args(self.archive, self.tar_extension))
-            batch.insert('echo',
-                          quote_args('Creating "', self.archive, self.tar_extension, '"...'))
-        else:
-            batch.add_args(quote_args(self.archive, self.tar_extension), quote_args(self.path))
-        # Delete original when done?
-        if self.delete:
-            batch.append('rm', '-rvf', quote_args(self.path))
-        # Run command batch
-        batch.run()
+        batch.add_metered_redirection_args(''.join([self.archive, self.tar_extension]))
+        batch.add_cleanup()
 
-    def restore(self):
-        dir = disk.get_versioned_path(os.path.basename(self.path)[:-len(self.tar_extension)])
-        os.mkdir(dir)
-        console.info('Restoring to "%s"...' % dir)
-        os.system('tar %s "%s" --strip-components 1 -C "%s"'
-                        % (self.tar_restore_options, self.path, dir))
+    def build_restore_batch(self, batch):
+        restore_to_dir = disk.get_versioned_path(os.path.basename(self.path)[:-len(self.tar_extension)])
+        os.mkdir(restore_to_dir)
+        console.info('Restoring to "%s"...' % restore_to_dir)
+        #TODO: Untested
+        batch.add_command('tar', self.tar_restore_options, quote_arg(self.path),
+                          '--strip-components', '1', '-C', quote_arg(restore_to_dir))
 
-    def compare(self):
-        os.system('tar %s "%s"' % (self.tar_compare_options))
+    def build_compare_batch(self, batch):
+        #TODO: Untested - runs against working directory?
+        batch.add_command('tar', self.tar_compare_options, quote_arg(self.path))
 
 
 #===============================================================================
@@ -389,7 +437,7 @@ class ArchiveTarball(ArchiveItem):
 class ArchiveZip(ArchiveItem):
 
     @staticmethod
-    def forPath(path, **kwargs):
+    def archive_for_path(path, **kwargs):
         m = TARBALL_TRAILER_RE.match(path)
         if m is None or m.group(3) != '.zip':
             return None
@@ -398,31 +446,16 @@ class ArchiveZip(ArchiveItem):
     def __init__(self, path, **kwargs):
         ArchiveItem.__init__(self, path, **kwargs)
 
-    def create(self):
-        batch = CommandBatch(dryrun=self.dryrun)
-        batch.append('zip', '-r', '--symlinks')
-        batch.add_args(quote_args(self.archive, '.zip'), quote_args(self.path))
-        # Add object file exclusions?
-        if self.ignoreobj:
-            for pat in CONFIG.data.BINARY_PATTERNS:
-                batch.add_args('--exclude', quote_args(pat))
-        # Add VCS exclusions?
-        if self.ignorevcs:
-            for pat in CONFIG.data.VCS_DIRECTORIES:
-                batch.add_args('--exclude', quote_args('*/', pat, '/*'))
-        # Add other exclusions?
-        for exclude in self.excludes:
-            batch.add_args('--exclude', quote_args(exclude))
-        # Delete original when done?
-        if self.delete:
-            batch.append('rm', '-rvf', quote_args(self.path))
-        # Run command batch
-        batch.run()
+    def build_create_batch(self, batch):
+        batch.add_command('zip', '-r', '--symlinks')
+        batch.add_args(quote_arg(self.archive, '.zip'), quote_arg(self.path))
+        batch.add_exclude_args('--exclude')
+        batch.add_cleanup()
 
-    def restore(self):
+    def build_restore_batch(self, batch):
         console.abort('Restore is not yet implemented for zip compression.')
 
-    def compare(self):
+    def build_compare_batch(self, batch):
         console.abort('Compare is not yet implemented for zip compression.')
 
 
@@ -431,7 +464,7 @@ class ArchiveZip(ArchiveItem):
 class ArchiveP7Zip(ArchiveItem):
 
     @staticmethod
-    def forPath(path, **kwargs):
+    def archive_for_path(path, **kwargs):
         m = TARBALL_TRAILER_RE.match(path)
         if m is None or m.group(3) != '.7z':
             return None
@@ -440,31 +473,16 @@ class ArchiveP7Zip(ArchiveItem):
     def __init__(self, path, **kwargs):
         ArchiveItem.__init__(self, path, **kwargs)
 
-    def create(self):
-        batch = CommandBatch(dryrun=self.dryrun)
-        batch.append('7za', 'a')
-        # Add object file exclusions?
-        if self.ignoreobj:
-            for pat in CONFIG.data.BINARY_PATTERNS:
-                batch.add_args(quote_args('-xr!', pat))
-        # Add VCS exclusions?
-        if self.ignorevcs:
-            for pat in CONFIG.data.VCS_DIRECTORIES:
-                batch.add_args(quote_args('-xr!', pat, '/*'))
-        # Add other exclusions?
-        for exclude in self.excludes:
-            batch.add_args('-xr!%s' % quote_args(exclude))
-        batch.add_args(quote_args(self.archive, '.7z'), quote_args(self.path))
-        # Delete original when done?
-        if self.delete:
-            batch.append('rm', '-rvf', quote_args(self.path))
-        # Run command batch
-        batch.run()
+    def build_create_batch(self, batch):
+        batch.add_command('7za', 'a')
+        batch.add_exclude_args('-xr!')
+        batch.add_args(quote_arg(self.archive, '.7z'), quote_arg(self.path))
+        batch.add_cleanup()
 
-    def restore(self):
+    def build_restore_batch(self, batch):
         console.abort('Restore is not yet implemented for p7zip compression.')
 
-    def compare(self):
+    def build_compare_batch(self, batch):
         console.abort('Compare is not yet implemented for p7zip compression.')
 
 
@@ -473,7 +491,7 @@ class ArchiveP7Zip(ArchiveItem):
 class ArchiveCompressedFile(ArchiveItem):
 
     @staticmethod
-    def forPath(path, **kwargs):
+    def archive_for_path(path, **kwargs):
         m = TARBALL_TRAILER_RE.match(path)
         ext = os.path.splitext(path)[1]
         if m is not None:
@@ -492,23 +510,15 @@ class ArchiveCompressedFile(ArchiveItem):
         ArchiveItem.__init__(self, path, **kwargs)
         self.compression = compression
 
-    def create(self):
-        batch = CommandBatch(dryrun=self.dryrun)
-        # Move or copy the file to the archive subdirectory
-        if self.delete:
-            batch.append('mv', '-v', quote_args(self.path), quote_args(self.archive))
-        else:
-            batch.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(self.archive))
-        # Then compress it
-        batch.append(self.compression, quote_args(self.archive))
-        # Run command batch
-        batch.run()
+    def build_create_batch(self, batch):
+        batch.add_move_or_copy_archive_command()
+        batch.add_archive_compression_command()
 
-    def restore(self):
-        pass
+    def build_restore_batch(self, batch):
+        console.abort('Restore is not yet implemented for compressed files.')
 
-    def compare(self):
-        pass
+    def build_compare_batch(self, batch):
+        console.abort('Compare is not yet implemented for compressed files.')
 
 
 #===============================================================================
@@ -516,7 +526,7 @@ class ArchiveCompressedFile(ArchiveItem):
 class ArchiveDirectory(ArchiveItem):
 
     @staticmethod
-    def forPath(path, **kwargs):
+    def archive_for_path(path, **kwargs):
         if not os.path.isdir(path):
             return None
         return ArchiveDirectory(path, **kwargs)
@@ -524,20 +534,16 @@ class ArchiveDirectory(ArchiveItem):
     def __init__(self, path, **kwargs):
         ArchiveItem.__init__(self, path, **kwargs)
 
-    def create(self):
-        batch = CommandBatch(dryrun=self.dryrun)
-        if self.delete:
-            batch.append('mv', '-v', quote_args(self.path), quote_args(self.archive))
-        else:
-            batch.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(self.archive))
-        batch.run()
+    def build_create_batch(self, batch):
+        batch.add_move_or_copy_archive_command()
 
-    def restore(self):
+    def build_restore_batch(self, batch):
         target = disk.get_versioned_path(self.path)
-        batch = CommandBatch(dryrun=self.dryrun)
-        batch.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(target))
+        batch.add_copy_command(self.path, target)
         console.info('Restoring to "%s"...' % target)
-        batch.run()
+
+    def build_compare_batch(self, batch):
+        console.abort('Compare is not yet implemented for archived directories.')
 
 
 #===============================================================================
@@ -545,7 +551,7 @@ class ArchiveDirectory(ArchiveItem):
 class ArchiveFile(ArchiveItem):
 
     @staticmethod
-    def forPath(path, **kwargs):
+    def archive_for_path(path, **kwargs):
         m = TARBALL_TRAILER_RE.match(path)
         if m is not None or os.path.isdir(path):
             return None
@@ -554,27 +560,23 @@ class ArchiveFile(ArchiveItem):
     def __init__(self, path, **kwargs):
         ArchiveItem.__init__(self, path, **kwargs)
 
-    def create(self):
-        batch = CommandBatch(dryrun=self.dryrun)
-        if self.delete:
-            batch.append('mv', '-v', quote_args(self.path), quote_args(self.archive))
-        else:
-            batch.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(self.archive))
-        batch.run()
+    def build_create_batch(self, batch):
+        batch.add_move_or_copy_archive_command()
 
-    def restore(self, path):
+    def build_restore_batch(self, batch):
         target = disk.get_versioned_path(self.path)
-        batch = CommandBatch(dryrun=self.dryrun)
-        batch.append(CONFIG.data.COPY_COMMAND, quote_args(self.path), quote_args(target))
+        batch.add_copy_command(self.path, target)
         console.info('Restoring to "%s"...' % target)
-        batch.run()
+
+    def build_compare_batch(self, batch):
+        console.abort('Compare is not yet implemented for archived files.')
 
 
 #===============================================================================
 
 class FMFactory(object):
     @staticmethod
-    def forPath(path, **kwargs):
+    def archive_for_path(path, **kwargs):
         for fmCls in (
                 ArchiveTarball,
                 ArchiveZip,
@@ -583,9 +585,9 @@ class FMFactory(object):
                 ArchiveFile,
                 ArchiveCompressedFile
         ):
-            fm = fmCls.forPath(path, **kwargs)
-            if fm:
-                return fm
+            archive = fmCls.archive_for_path(path, **kwargs)
+            if archive:
+                return archive
         console.abort('"%s" is not a supported type' % path)
 
 
@@ -616,7 +618,7 @@ def choose_archive(name, **kwargs):
             path = archives[i-1]
         else:
             console.error('bad index %d' % i)
-    return (path, FMFactory.forPath(path, **kwargs))
+    return FMFactory.archive_for_path(path, **kwargs)
 
 
 #===============================================================================
@@ -646,12 +648,12 @@ def cmdargs_to_kwargs(cmdargs):
     args=get_archive_cli_args()
 )
 #===============================================================================
-def _put(runner):
+def _(runner):
     read_configs(runner)
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
-            fm = FMFactory.forPath(path, **cmdargs_to_kwargs(runner.cmdargs))
-            fm.create()
+            archive = FMFactory.archive_for_path(path, **cmdargs_to_kwargs(runner.cmdargs))
+            archive.create()
 
 
 #===============================================================================
@@ -661,7 +663,7 @@ def _put(runner):
     args=get_archive_cli_args()
 )
 #===============================================================================
-def _gzip(runner):
+def _(runner):
     read_configs(runner)
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
@@ -676,7 +678,7 @@ def _gzip(runner):
     args=get_archive_cli_args()
 )
 #===============================================================================
-def _bzip2(runner):
+def _(runner):
     read_configs(runner)
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
@@ -691,7 +693,7 @@ def _bzip2(runner):
     args=get_archive_cli_args()
 )
 #===============================================================================
-def _xz(runner):
+def _(runner):
     read_configs(runner)
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
@@ -706,7 +708,7 @@ def _xz(runner):
     args=get_archive_cli_args()
 )
 #===============================================================================
-def _lz(runner):
+def _(runner):
     read_configs(runner)
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
@@ -721,7 +723,7 @@ def _lz(runner):
     args=get_archive_cli_args()
 )
 #===============================================================================
-def _zip(runner):
+def _(runner):
     read_configs(runner)
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
@@ -736,7 +738,7 @@ def _zip(runner):
     args=get_archive_cli_args()
 )
 #===============================================================================
-def _p7zip(runner):
+def _(runner):
     read_configs(runner)
     for path_pat in runner.cmdargs.path:
         for path in glob(path_pat):
@@ -753,11 +755,11 @@ def _p7zip(runner):
     ]
 )
 #===============================================================================
-def _get(runner):
+def _(runner):
     read_configs(runner)
     for name in files:
-        (path, fm) = choose_archive(name, **cmdargs_to_kwargs(runner.cmdargs))
-        fm.restore(path)
+        archive = choose_archive(name, **cmdargs_to_kwargs(runner.cmdargs))
+        archive.restore()
 
 
 #===============================================================================
@@ -769,11 +771,11 @@ def _get(runner):
     ]
 )
 #===============================================================================
-def _compare(runner):
+def _(runner):
     read_configs(runner)
     for name in files:
-        (path, fm) = choose_archive(name, **cmdargs_to_kwargs(runner.cmdargs))
-        fm.compare(path)
+        archive = choose_archive(name, **cmdargs_to_kwargs(runner.cmdargs))
+        archive.compare()
 
 
 #===============================================================================
@@ -782,7 +784,7 @@ def _compare(runner):
     description='Generate sample RC file to working directory.',
 )
 #===============================================================================
-def _generate_rc(runner):
+def _(runner):
     CONFIG.generate()
 
 
@@ -800,11 +802,16 @@ def read_configs(runner, *directories):
     support_pause=True,
 )
 #===============================================================================
-def _main(runner):
+def _(runner):
     console.set_verbose(runner.cmdargs.verbose)
 
 
 #===============================================================================
 if __name__ == '__main__':
 #===============================================================================
-    cli.main()
+    try:
+        cli.main()
+    except CommandBatch.Failure as e:
+        console.abort(e)
+    except KeyboardInterrupt:
+        console.abort('Interrupted by user.')
