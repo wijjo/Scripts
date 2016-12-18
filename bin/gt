@@ -157,7 +157,7 @@ def snapshot(runner):
 #===============================================================================
 def new(runner):
     folder = runner.cmdargs.branch
-    runner.update(folder=folder)
+    runner.set_symbols(folder=folder)
     runner.shell('git fetch')
     runner.shell('git checkout master')
     runner.shell('git pull')
@@ -204,7 +204,7 @@ def rename(runner):
                 break
         else:
             console.abort('Not in a GitHub-managed folder.')
-    runner.update(newlocal=newlocal, newremote=newremote, oldbranch=oldbranch)
+    runner.set_symbols(newlocal=newlocal, newremote=newremote, oldbranch=oldbranch)
     runner.shell('git branch -m %(oldbranch)s %(newlocal)s')
     runner.shell('git push origin %(newremote)s')
     runner.shell('git branch --set-upstream %(newlocal)s origin/%(newremote)s')
