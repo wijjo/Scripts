@@ -156,8 +156,7 @@ def snapshot(runner):
 )
 #===============================================================================
 def new(runner):
-    folder = runner.cmdargs.branch
-    runner.set_symbols(folder=folder)
+    runner.var.folder = runner.cmdargs.branch
     runner.shell('git fetch')
     runner.shell('git checkout master')
     runner.shell('git pull')
@@ -192,19 +191,18 @@ def branches(runner):
 )
 #===============================================================================
 def rename(runner):
-    newlocal = runner.cmdargs.branch
+    runner.var.newlocal = runner.cmdargs.branch
     if runner.cmdargs.remotename:
-        newremote = runner.cmdargs.remotename
+        runner.var.newremote = runner.cmdargs.remotename
     else:
-        newremote = newlocal
+        runner.var.newremote = runner.var.newlocal
     with command.Command('git', 'status') as gitcmd:
         for s in gitcmd:
             if s.startswith('# On branch '):
-                oldbranch = s[12:]
+                runner.var.oldbranch = s[12:]
                 break
         else:
             console.abort('Not in a GitHub-managed folder.')
-    runner.set_symbols(newlocal=newlocal, newremote=newremote, oldbranch=oldbranch)
     runner.shell('git branch -m %(oldbranch)s %(newlocal)s')
     runner.shell('git push origin %(newremote)s')
     runner.shell('git branch --set-upstream %(newlocal)s origin/%(newremote)s')

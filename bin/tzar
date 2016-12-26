@@ -87,114 +87,128 @@ TARBALL_TRAILER_RE = re.compile('^[.]%s/(.*)-([0-9]+-[0-9]+)([.]tar)?[.](gz|bz2)
 NUMBER_WITH_DEFAULT_RE = re.compile('^[0-9]*$')
 
 # Common command line options and arguments for archiving
-def get_archive_cli_args():
-    return [
-        cli.Boolean('delete', 'delete files after archiving',
-                   '-d', '--delete', default=False),
-        cli.Boolean('ignoreobj', 'ignore %s' % ' '.join(CONFIG.data.BINARY_PATTERNS),
-                   '--ignore-obj', default=False),
-        cli.Boolean('ignorevcs', 'ignore %s subdirectories' % ' '.join(CONFIG.data.VCS_DIRECTORIES),
-                   '--ignore-vcs', default=False),
-        cli.Boolean('noprogress', 'disable progress meter',
-                   '--no-progress', default=False),
-        cli.String('outputdir', 'output directory',
-                   '-o', '--output-dir'),
-        cli.String('path', 'path(s) to archive', nargs='+'),
-    ]
+ARCHIVE_CLI_ARGUMENTS = [
+    cli.Boolean('delete', 'delete files after archiving',
+               '-d', '--delete', default=False),
+    cli.Boolean('ignoreobj', 'ignore binary files '
+                             '(affected by the BINARY_PATTERNS configuration option)',
+               '--ignore-obj', default=False),
+    cli.Boolean('ignorevcs', 'ignore source control subdirectories '
+                             '(affected by the VCS_DIRECTORIES configuration option)',
+               '--ignore-vcs', default=False),
+    cli.Boolean('noprogress', 'disable progress meter',
+               '--no-progress', default=False),
+    cli.String('outputdir', 'output directory',
+               '-o', '--output-dir'),
+    cli.String('path', 'path(s) to archive', nargs='+'),
+]
 
 
-#=== Configuration dictionary with pseudo-attributes ===========================
+CONFIG = None
 
-CONFIG = Config('.%(PROGRAM_NAME)src' % globals(),
-    ConfigSpec(
-        'BINARY_PATTERNS',
-        [
-            '*.o',
-            '*.so',
-            '*.so.*',
-            '*.co',
-            '*.pyc',
-            '*.pyd',
-            '*.Plo',
-            '*.la',
-            '*.lai',
-            '*.lo',
-            '*.a',
-            '*.dll',
-            '*.DLL',
-            '*.exe',
-            '*.EXE',
-            '*.lib',
-            '*.LIB',
-            '*.dylib',
-            '*.jnilib',
-            '*.jar',
-            '*.deb',
-            '*.rpm',
-            '*.zip',
-            '*.ZIP',
-            '*.gz',
-            '*.tgz',
-            '*.bz2',
-            '*.xz',
-            '*.lz',
-            '*.sym',
-            '*.bin',
-            '*/tags',
-        ],
-        'Binary file wildcard patterns that are optionally ignored.'
-    ),
-    ConfigSpec(
-        'COPY_COMMAND',
-        'cp -Rpv' if sys.platform in SIMPLE_CP_PLATFORMS else 'cp -av',
-        'Command used for file copy operations.'
-    ),
-    ConfigSpec(
-        'EXCLUDE_BINARIES',
-        False,
-        'Exclude binary files if True.'
-    ),
-    ConfigSpec(
-        'EXCLUDE_OTHER_PATTERNS',
-        [],
-        'Wildcard patterns for other excluded files.'
-    ),
-    ConfigSpec(
-        'EXCLUDE_VCS',
-        False,
-        'Exclude VCS directories if True.'
-    ),
-    ConfigSpec(
-        'OUTPUT_DIRECTORY',
-        '.%s' % PROGRAM_NAME,
-        'Output subdirectory name.'
-    ),
-    ConfigSpec(
-        'REPLACEMENT_GZIP',
-        shell.find_executable('pigz'),
-        'Compatible gzip replacement. By default pigz is used when available.'
-    ),
-    ConfigSpec(
-        'REPLACEMENT_BZIP2',
-        shell.find_executable('pbzip2', 'lbzip2'),
-        'Compatible bzip2 replacement. By default pbzip2 or lbzip2 are used when available.'
-    ),
-    ConfigSpec(
-        'REPLACEMENT_XZ',
-        shell.find_executable('xz'),
-        'Use xz as an external program to benefit from its multi-threading.'
-    ),
-    ConfigSpec(
-        'REPLACEMENT_LZIP',
-        shell.find_executable('plzip'),
-        'Compatible lzip replacement. By default plzip is used when available.'
-    ),
-    ConfigSpec(
-        'VCS_DIRECTORIES',
-        [ '.svn', '.cvs', '.git' ],
-        'VCS directory names that are optionally ignored.'
-    ),
+#===============================================================================
+@cli.Main(
+    description='Simple backup archiver.',
+    support_verbose=True,
+    support_dryrun=True,
+    support_pause=True,
 )
+#===============================================================================
+def _(runner):
+    console.set_verbose(runner.cmdargs.verbose)
+
+    # Configuration dictionary with pseudo-attributes
+    global CONFIG
+    CONFIG = Config('.%(progname)src' % runner.var,
+        ConfigSpec(
+            'BINARY_PATTERNS',
+            [
+                '*.o',
+                '*.so',
+                '*.so.*',
+                '*.co',
+                '*.pyc',
+                '*.pyd',
+                '*.Plo',
+                '*.la',
+                '*.lai',
+                '*.lo',
+                '*.a',
+                '*.dll',
+                '*.DLL',
+                '*.exe',
+                '*.EXE',
+                '*.lib',
+                '*.LIB',
+                '*.dylib',
+                '*.jnilib',
+                '*.jar',
+                '*.deb',
+                '*.rpm',
+                '*.zip',
+                '*.ZIP',
+                '*.gz',
+                '*.tgz',
+                '*.bz2',
+                '*.xz',
+                '*.lz',
+                '*.sym',
+                '*.bin',
+                '*/tags',
+            ],
+            'Binary file wildcard patterns that are optionally ignored.'
+        ),
+        ConfigSpec(
+            'COPY_COMMAND',
+            'cp -Rpv' if sys.platform in SIMPLE_CP_PLATFORMS else 'cp -av',
+            'Command used for file copy operations.'
+        ),
+        ConfigSpec(
+            'EXCLUDE_BINARIES',
+            False,
+            'Exclude binary files if True.'
+        ),
+        ConfigSpec(
+            'EXCLUDE_OTHER_PATTERNS',
+            [],
+            'Wildcard patterns for other excluded files.'
+        ),
+        ConfigSpec(
+            'EXCLUDE_VCS',
+            False,
+            'Exclude VCS directories if True.'
+        ),
+        ConfigSpec(
+            'OUTPUT_DIRECTORY',
+            '.%(progname)s' % runner.var,
+            'Output subdirectory name.'
+        ),
+        ConfigSpec(
+            'REPLACEMENT_GZIP',
+            shell.find_executable('pigz'),
+            'Compatible gzip replacement. By default pigz is used when available.'
+        ),
+        ConfigSpec(
+            'REPLACEMENT_BZIP2',
+            shell.find_executable('pbzip2', 'lbzip2'),
+            'Compatible bzip2 replacement. By default pbzip2 or lbzip2 are used when available.'
+        ),
+        ConfigSpec(
+            'REPLACEMENT_XZ',
+            shell.find_executable('xz'),
+            'Use xz as an external program to benefit from its multi-threading.'
+        ),
+        ConfigSpec(
+            'REPLACEMENT_LZIP',
+            shell.find_executable('plzip'),
+            'Compatible lzip replacement. By default plzip is used when available.'
+        ),
+        ConfigSpec(
+            'VCS_DIRECTORIES',
+            [ '.svn', '.cvs', '.git' ],
+            'VCS directory names that are optionally ignored.'
+        ),
+    )
 
 
 #===============================================================================
@@ -645,7 +659,7 @@ def cmdargs_to_kwargs(cmdargs):
 @cli.Command(
     name='put',
     description='Archive using a straight copy.',
-    args=get_archive_cli_args()
+    args=ARCHIVE_CLI_ARGUMENTS
 )
 #===============================================================================
 def _(runner):
@@ -660,7 +674,7 @@ def _(runner):
 @cli.Command(
     name='gz',
     description='Archive with gzip compression.',
-    args=get_archive_cli_args()
+    args=ARCHIVE_CLI_ARGUMENTS
 )
 #===============================================================================
 def _(runner):
@@ -675,7 +689,7 @@ def _(runner):
 @cli.Command(
     name='bz2',
     description='Archive with bzip2 compression.',
-    args=get_archive_cli_args()
+    args=ARCHIVE_CLI_ARGUMENTS
 )
 #===============================================================================
 def _(runner):
@@ -690,7 +704,7 @@ def _(runner):
 @cli.Command(
     name='xz',
     description='Archive with xz compression.',
-    args=get_archive_cli_args()
+    args=ARCHIVE_CLI_ARGUMENTS
 )
 #===============================================================================
 def _(runner):
@@ -705,7 +719,7 @@ def _(runner):
 @cli.Command(
     name='lz',
     description='Archive with lzip compression.',
-    args=get_archive_cli_args()
+    args=ARCHIVE_CLI_ARGUMENTS
 )
 #===============================================================================
 def _(runner):
@@ -720,7 +734,7 @@ def _(runner):
 @cli.Command(
     name='zip',
     description='Archive with zip compression.',
-    args=get_archive_cli_args()
+    args=ARCHIVE_CLI_ARGUMENTS
 )
 #===============================================================================
 def _(runner):
@@ -735,7 +749,7 @@ def _(runner):
 @cli.Command(
     name='7z',
     description='Archive with p7zip compression.',
-    args=get_archive_cli_args()
+    args=ARCHIVE_CLI_ARGUMENTS
 )
 #===============================================================================
 def _(runner):
@@ -792,18 +806,6 @@ def _(runner):
 def read_configs(runner, *directories):
 #===============================================================================
     CONFIG.load_for_paths(runner.cmdargs.path, directories, '~', '.')
-
-
-#===============================================================================
-@cli.Main(
-    description='Simple backup archiver.',
-    support_verbose=True,
-    support_dryrun=True,
-    support_pause=True,
-)
-#===============================================================================
-def _(runner):
-    console.set_verbose(runner.cmdargs.verbose)
 
 
 #===============================================================================
