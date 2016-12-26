@@ -18,7 +18,7 @@ from scriptbase import cli, git, console, command, utility
 )
 #===============================================================================
 def _main(runner):
-    console.set_verbose(runner.cmdargs.verbose)
+    console.set_verbose(runner.arg.verbose)
 
 
 #===============================================================================
@@ -48,16 +48,16 @@ def status(runner):
       URL: %(url)s
    Branch: %(local)s
    Tracks: %(local)s''' % locals()
-            if not submodule and not runner.cmdargs.short:
+            if not submodule and not runner.arg.short:
                 _header()
                 header_displayed = True
-            changes = git.get_changes_by_time() if runner.cmdargs.time else git.get_changes()
+            changes = git.get_changes_by_time() if runner.arg.time else git.get_changes()
             for change in changes:
                 path = change.path2 if change.path2 else change.path
-                if not runner.cmdargs.short and not header_displayed:
+                if not runner.arg.short and not header_displayed:
                     _header()
                     header_displayed = True
-                if runner.cmdargs.short:
+                if runner.arg.short:
                     print path
                 else:
                     try:
@@ -93,8 +93,8 @@ def snapshot(runner):
     branch_name = git.get_local_branch().replace('/', '_')
     timestamp = time.strftime('%y%m%d-%H%M%S')
     output_name = '-'.join([timestamp, root_name, branch_name])
-    output_dir = os.path.join(runner.cmdargs.output, output_name)
-    zip_name = 'changed-and-new.zip' if runner.cmdargs.all else 'changed.zip'
+    output_dir = os.path.join(runner.arg.output, output_name)
+    zip_name = 'changed-and-new.zip' if runner.arg.all else 'changed.zip'
     zip_path = os.path.join(output_dir, zip_name)
     zip_path_abs = os.path.realpath(zip_path)
     diff_name = 'patch.diff'
@@ -104,7 +104,7 @@ def snapshot(runner):
     console.info('Base directory (Git project root):', [root_dir])
     console.info('Output directory:', [output_dir])
 
-    if not runner.cmdargs.dryrun:
+    if not runner.arg.dryrun:
         os.makedirs(output_dir)
 
     try:
@@ -117,25 +117,25 @@ def snapshot(runner):
             if change.flag.startswith('R'):
                 file_paths.append(change.path2)
             elif change.flag != 'D' and change.path != zip_path_abs:
-                if runner.cmdargs.all or change.flag != '??':
-                    if runner.cmdargs.dryrun:
+                if runner.arg.all or change.flag != '??':
+                    if runner.arg.dryrun:
                         sys.stdout.write('+%s%s' % (change.path, os.linesep))
                     file_paths.append(change.path)
 
         if not file_paths:
             console.info('Nothing to archive: %s' % root_name)
 
-        if not runner.cmdargs.dryrun and file_paths:
+        if not runner.arg.dryrun and file_paths:
             zip_file = zipfile.ZipFile(zip_path_abs, 'w', zipfile.ZIP_DEFLATED)
             for path in file_paths:
-                if runner.cmdargs.verbose:
+                if runner.arg.verbose:
                     sys.stdout.write('+%s%s' % (path, os.linesep))
                 zip_file.write(path)
             zip_file.close()
 
         console.info('Patch diff: %s' % diff_name)
 
-        if not runner.cmdargs.dryrun:
+        if not runner.arg.dryrun:
             with open(diff_path_abs, 'w') as diff_file:
                 with command.Command('git', 'diff') as gitcmd:
                     for line in gitcmd:
@@ -156,16 +156,16 @@ def snapshot(runner):
 )
 #===============================================================================
 def new(runner):
-    runner.var.folder = runner.cmdargs.branch
+    runner.var.folder = runner.arg.branch
     runner.shell('git fetch')
     runner.shell('git checkout master')
     runner.shell('git pull')
     git.create_branch(None,
-                      runner.cmdargs.branch,
-                      runner.cmdargs.ancestor,
+                      runner.arg.branch,
+                      runner.arg.ancestor,
                       create_remote=True,
-                      dryrun=runner.cmdargs.dryrun,
-                      verbose=runner.cmdargs.verbose)
+                      dryrun=runner.arg.dryrun,
+                      verbose=runner.arg.verbose)
 
 
 #===============================================================================
@@ -191,9 +191,9 @@ def branches(runner):
 )
 #===============================================================================
 def rename(runner):
-    runner.var.newlocal = runner.cmdargs.branch
-    if runner.cmdargs.remotename:
-        runner.var.newremote = runner.cmdargs.remotename
+    runner.var.newlocal = runner.arg.branch
+    if runner.arg.remotename:
+        runner.var.newremote = runner.arg.remotename
     else:
         runner.var.newremote = runner.var.newlocal
     with command.Command('git', 'status') as gitcmd:
@@ -222,7 +222,7 @@ def review(runner):
     if not utility.find_executable('hub'):
         console.abort('The hub command must be installed. (http://defunkt.io/hub/)',
                       'OS X Homebrew command: brew install hub')
-    runner.shell('hub pull-request "%s" -b %s' % (runner.cmdargs.title, branch))
+    runner.shell('hub pull-request "%s" -b %s' % (runner.arg.title, branch))
 
 
 #===============================================================================

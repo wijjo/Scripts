@@ -70,12 +70,12 @@ class Chopper(object):
     ],
 )
 def chop(runner):
-    chopper = Chopper(runner.cmdargs.xgrid,
-                      runner.cmdargs.ygrid,
-                      runner.cmdargs.xoffset,
-                      runner.cmdargs.yoffset,
-                      runner.cmdargs.dryrun)
-    for arg in runner.cmdargs.input_image:
+    chopper = Chopper(runner.arg.xgrid,
+                      runner.arg.ygrid,
+                      runner.arg.xoffset,
+                      runner.arg.yoffset,
+                      runner.arg.dryrun)
+    for arg in runner.arg.input_image:
         for path in glob.glob(os.path.expanduser(os.path.expandvars(arg))):
             if os.path.exists(path):
                 with command.Command('identify', arg) as cmd:
@@ -83,7 +83,7 @@ def chop(runner):
                         output = line[len(path)+1:]
                         m = re_identify.search(line)
                         if not m is None:
-                            chopper.chop(path, base=runner.cmdargs.output_base)
+                            chopper.chop(path, base=runner.arg.output_base)
                         else:
                             console.error(line)
 
@@ -98,18 +98,18 @@ Uses the input file base name as the output file base name.''',
     ],
 )
 def ios_icons(runner):
-    for arg in runner.cmdargs.input_image:
+    for arg in runner.arg.input_image:
         for path in glob.glob(os.path.expanduser(os.path.expandvars(arg))):
             if os.path.exists(path):
                 def resize(pixels, *copies):
-                    if runner.cmdargs.output_base is None:
+                    if runner.arg.output_base is None:
                         basename = os.path.splitext(os.path.basename(path))[0]
                     else:
-                        basename = runner.cmdargs.output_base
+                        basename = runner.arg.output_base
                     for copy in copies:
                         output = '%(basename)s-%(copy)s.png' % locals()
                         command = 'convert -resize %(pixels)sx%(pixels)s %(path)s %(output)s' % locals()
-                        if runner.cmdargs.dryrun:
+                        if runner.arg.dryrun:
                             print command
                         else:
                             print output
@@ -130,7 +130,7 @@ def ios_icons(runner):
     support_dryrun=True,
 )
 def main(runner):
-    console.set_verbose(runner.cmdargs.verbose)
+    console.set_verbose(runner.arg.verbose)
 
 
 if __name__ == '__main__':

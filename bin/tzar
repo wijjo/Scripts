@@ -112,14 +112,15 @@ CONFIG = None
     support_verbose=True,
     support_dryrun=True,
     support_pause=True,
+    support_plugins=True
 )
 #===============================================================================
 def _(runner):
-    console.set_verbose(runner.cmdargs.verbose)
+    console.set_verbose(runner.arg.verbose)
 
     # Configuration dictionary with pseudo-attributes
     global CONFIG
-    CONFIG = Config('.%(progname)src' % runner.var,
+    CONFIG = Config('.%(program_name)src' % runner.var,
         ConfigSpec(
             'BINARY_PATTERNS',
             [
@@ -180,7 +181,7 @@ def _(runner):
         ),
         ConfigSpec(
             'OUTPUT_DIRECTORY',
-            '.%(progname)s' % runner.var,
+            '.%(program_name)s' % runner.var,
             'Output subdirectory name.'
         ),
         ConfigSpec(
@@ -643,16 +644,16 @@ def get_timestamp():
 
 #===============================================================================
 
-def cmdargs_to_kwargs(cmdargs):
+def args_to_kwargs(command_args):
     return dict(
-        dryrun=cmdargs.dryrun,
-        pause=cmdargs.pause,
-        verbose=cmdargs.verbose,
-        delete=cmdargs.delete,
-        ignoreobj=cmdargs.ignoreobj,
-        ignorevcs=cmdargs.ignorevcs,
-        noprogress=cmdargs.noprogress,
-        outputdir=cmdargs.outputdir
+        dryrun=command_args.dryrun,
+        pause=command_args.pause,
+        verbose=command_args.verbose,
+        delete=command_args.delete,
+        ignoreobj=command_args.ignoreobj,
+        ignorevcs=command_args.ignorevcs,
+        noprogress=command_args.noprogress,
+        outputdir=command_args.outputdir
     )
 
 #===============================================================================
@@ -664,9 +665,9 @@ def cmdargs_to_kwargs(cmdargs):
 #===============================================================================
 def _(runner):
     read_configs(runner)
-    for path_pat in runner.cmdargs.path:
+    for path_pat in runner.arg.path:
         for path in glob(path_pat):
-            archive = FMFactory.archive_for_path(path, **cmdargs_to_kwargs(runner.cmdargs))
+            archive = FMFactory.archive_for_path(path, **args_to_kwargs(runner.arg))
             archive.create()
 
 
@@ -679,9 +680,9 @@ def _(runner):
 #===============================================================================
 def _(runner):
     read_configs(runner)
-    for path_pat in runner.cmdargs.path:
+    for path_pat in runner.arg.path:
         for path in glob(path_pat):
-            fm = ArchiveTarball(path, "gzip", **cmdargs_to_kwargs(runner.cmdargs))
+            fm = ArchiveTarball(path, "gzip", **args_to_kwargs(runner.arg))
             fm.create()
 
 
@@ -694,9 +695,9 @@ def _(runner):
 #===============================================================================
 def _(runner):
     read_configs(runner)
-    for path_pat in runner.cmdargs.path:
+    for path_pat in runner.arg.path:
         for path in glob(path_pat):
-            fm = ArchiveTarball(path, "bzip2", **cmdargs_to_kwargs(runner.cmdargs))
+            fm = ArchiveTarball(path, "bzip2", **args_to_kwargs(runner.arg))
             fm.create()
 
 
@@ -709,9 +710,9 @@ def _(runner):
 #===============================================================================
 def _(runner):
     read_configs(runner)
-    for path_pat in runner.cmdargs.path:
+    for path_pat in runner.arg.path:
         for path in glob(path_pat):
-            fm = ArchiveTarball(path, "xz", **cmdargs_to_kwargs(runner.cmdargs))
+            fm = ArchiveTarball(path, "xz", **args_to_kwargs(runner.arg))
             fm.create()
 
 
@@ -724,9 +725,9 @@ def _(runner):
 #===============================================================================
 def _(runner):
     read_configs(runner)
-    for path_pat in runner.cmdargs.path:
+    for path_pat in runner.arg.path:
         for path in glob(path_pat):
-            fm = ArchiveTarball(path, "lzip", **cmdargs_to_kwargs(runner.cmdargs))
+            fm = ArchiveTarball(path, "lzip", **args_to_kwargs(runner.arg))
             fm.create()
 
 
@@ -739,9 +740,9 @@ def _(runner):
 #===============================================================================
 def _(runner):
     read_configs(runner)
-    for path_pat in runner.cmdargs.path:
+    for path_pat in runner.arg.path:
         for path in glob(path_pat):
-            fm = ArchiveZip(path, **cmdargs_to_kwargs(runner.cmdargs))
+            fm = ArchiveZip(path, **args_to_kwargs(runner.arg))
             fm.create()
 
 
@@ -754,9 +755,9 @@ def _(runner):
 #===============================================================================
 def _(runner):
     read_configs(runner)
-    for path_pat in runner.cmdargs.path:
+    for path_pat in runner.arg.path:
         for path in glob(path_pat):
-            fm = ArchiveP7Zip(path, **cmdargs_to_kwargs(runner.cmdargs))
+            fm = ArchiveP7Zip(path, **args_to_kwargs(runner.arg))
             fm.create()
 
 
@@ -772,7 +773,7 @@ def _(runner):
 def _(runner):
     read_configs(runner)
     for name in files:
-        archive = choose_archive(name, **cmdargs_to_kwargs(runner.cmdargs))
+        archive = choose_archive(name, **args_to_kwargs(runner.arg))
         archive.restore()
 
 
@@ -788,7 +789,7 @@ def _(runner):
 def _(runner):
     read_configs(runner)
     for name in files:
-        archive = choose_archive(name, **cmdargs_to_kwargs(runner.cmdargs))
+        archive = choose_archive(name, **args_to_kwargs(runner.arg))
         archive.compare()
 
 
@@ -805,7 +806,7 @@ def _(runner):
 #===============================================================================
 def read_configs(runner, *directories):
 #===============================================================================
-    CONFIG.load_for_paths(runner.cmdargs.path, directories, '~', '.')
+    CONFIG.load_for_paths(runner.arg.path, directories, '~', '.')
 
 
 #===============================================================================
