@@ -23,7 +23,7 @@ from ..batch import TzarBatch
 
 # Common command line options and arguments for archiving
 ARCHIVE_CLI_ARGUMENTS = [
-    Boolean('delete', 'delete files after archiving', '-d', '--delete', default=False),
+    Boolean('delete', 'delete source files after archiving', '-d', '--delete', default=False),
     Boolean('ignoreobj', 'ignore binary files '
                          '(affected by the BINARY_PATTERNS configuration option)',
             '--ignore-obj', default=False),

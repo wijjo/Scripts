@@ -30,7 +30,7 @@ class ZipItem(BaseItem):
         batch.add_command('zip', '-r', '--symlinks')
         batch.add_args((self.archive, '.zip'), self.path)
         batch.add_exclude_args('--exclude')
-        batch.add_cleanup()
+        batch.add_source_deletion()
 
     def build_restore_batch(self, batch):
         console.abort('Restore is not yet implemented for zip compression.')

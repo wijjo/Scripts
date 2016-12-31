@@ -30,7 +30,7 @@ class P7ZipItem(BaseItem):
         batch.add_command('7za', 'a')
         batch.add_exclude_args('-xr!')
         batch.add_args((self.archive, '.7z'), self.path)
-        batch.add_cleanup()
+        batch.add_source_deletion()
 
     def build_restore_batch(self, batch):
         console.abort('Restore is not yet implemented for p7zip compression.')

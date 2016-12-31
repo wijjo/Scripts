@@ -93,7 +93,8 @@ class TarballItem(BaseItem):
             batch.add_metered_redirection_args(output_path, self.path)
         else:
             batch.add_args(output_path, self.path)
-        batch.add_cleanup()
+        batch.add_source_deletion()
+        batch.add_error_deletion_path(output_path)
 
     def build_restore_batch(self, batch):
         restore_to_dir = disk.get_versioned_path(os.path.basename(self.path)[:-len(self.tar_extension)])

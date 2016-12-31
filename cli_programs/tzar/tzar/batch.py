@@ -13,9 +13,12 @@
 # limitations under the License.
 
 import sys
+import os
+import shutil
 
 from scriptbase import command
 from scriptbase import shell
+from scriptbase import console
 
 class TzarBatch(command.Batch):
 
@@ -71,6 +74,6 @@ class TzarBatch(command.Batch):
     def add_archive_compression_command(self):
         self.add_compression_command(self.item.archive)
 
-    def add_cleanup(self):
+    def add_source_deletion(self):
         if self.item.delete:
             batch.add_command('rm', '-rvf', self.item.path)
