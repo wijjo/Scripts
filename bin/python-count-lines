@@ -1,0 +1,117 @@
+#!/usr/bin/env python
+
+import sys
+import os
+import re
+from argparse import ArgumentParser
+
+R_DOCSTRING_BEGIN  = re.compile(r'^\s*(\'\'\'|\"\"\")(.*)\s*$')
+R_DOCSTRING_END    = re.compile(r'^\s*(.*)(\'\'\'|\"\"\")\s*(.*)\s*$')
+R_COMMENT_OR_EMPTY = re.compile(r'^\s*(#.*)?\s*$')
+
+def count_lines(f):
+    code = 0
+    total = 0
+    docstring_quote = None
+    for line in f:
+        total += 1
+        if docstring_quote:
+            m = R_DOCSTRING_END.match(line)
+            if m and m.group(2) == docstring_quote:
+                docstring_quote = None
+                if m.group(3):
+                    code += 1
+        else:
+            m = R_DOCSTRING_BEGIN.match(line)
+            if m:
+                docstring_quote = m.group(1)
+            else:
+                if not R_COMMENT_OR_EMPTY.match(line):
+                    code += 1
+    return (code, total)
+
+class Results(object):
+    valid_order_by_specs = dict(p='path', c='code', t='total', d='density')
+    density_format = '%.1f'
+    class Result(object):
+        def __init__(self, path, code, total):
+            self.path = path
+            self.code = code
+            self.total = total
+            self.density = None if total is None else (code / float(total) * 100.0 if total else 0.0)
+        def __cmp__(self, other):
+            if self.code is None:
+                if other.code is None:
+                    return 0
+                return -1
+            if other.code is None:
+                return 1
+            return cmp(self.code, other.code)
+        def strings(self):
+            if self.code is None:
+                return (self.path, '*bad path*', '', '')
+            return [self.path, str(self.code), str(self.total), Results.density_format % self.density]
+        def widths(self):
+            return [len(s) for s in self.strings()]
+    def __init__(self):
+        self.heading = ['-path-', '-code-', '-total-', '-density(%)-']
+        self.widths  = [len(h) for h in self.heading]
+        self.results = []
+    def add_good(self, path, code, total):
+        self.results.append(Results.Result(path, code, total))
+        self._update_widths()
+    def add_bad(self, path):
+        self.results.append(Results.Result(path, None, None))
+        self._update_widths()
+    def format_results(self, order_by_column):
+        key_func = lambda result: getattr(result, order_by_column)
+        reverse = order_by_column != 'path'
+        self.results.sort(key=key_func, reverse=reverse)
+        row_format = '%%-%ds  %%%ds  %%%ds  %%%ds' % tuple(self.widths)
+        yield row_format % tuple(self.heading)
+        for r in self.results:
+            yield row_format % tuple(r.strings())
+    def _update_widths(self):
+        widths = self.results[-1].widths()
+        self.widths = [max(self.widths[i], widths[i]) for i in range(4)]
+
+def main(paths, order_by):
+    results = Results()
+    for path in paths:
+        try:
+            with open(path) as f:
+                code, total = count_lines(f)
+                results.add_good(path, code, total)
+        except (OSError, IOError):
+            results.add_bad(path)
+    if results:
+        for order_by_column in order_by:
+            print('')
+            print('== Sorted by: %s ==' % order_by_column)
+            for s in results.format_results(order_by_column):
+                print(s)
+
+def parse_order_by_spec(input_str, default_str):
+    input_set = set(input_str)
+    valid_set = set(Results.valid_order_by_specs.keys())
+    final_set = input_set.intersection(valid_set)
+    bad_set   = input_set.difference(valid_set)
+    if not final_set:
+        sys.stderr.write('ERROR: no valid order-by letter(s) were specified.%s' % os.linesep)
+        final_set = set(default_str)
+    if bad_set:
+        bad_str = ''.join(sorted(bad_set))
+        sys.stderr.write('ERROR: Bad order-by specification letter(s): %s%s'
+                            % (bad_str, os.linesep))
+    return [Results.valid_order_by_specs[l] for l in sorted(final_set)]
+
+if __name__ == '__main__':
+    try:
+        parser = ArgumentParser(description='Report on Python code line metrics.')
+        parser.add_argument('-o', '--orderby', dest='orderby', default='p',
+                help='order-by columns: [c]ode [d]ensity [p]ath [t]otal (default=p)')
+        parser.add_argument(dest='path', nargs='+', help='Python source file paths')
+        args = parser.parse_args()
+        main(args.path, parse_order_by_spec(args.orderby.lower(), 'p'))
+    except KeyboardInterrupt:
+        sys.exit(2)
