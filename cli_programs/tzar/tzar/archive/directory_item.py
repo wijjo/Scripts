@@ -35,7 +35,7 @@ class DirectoryItem(BaseItem):
     def build_restore_batch(self, batch):
         target = disk.get_versioned_path(self.path)
         batch.add_copy_command(self.path, target)
-        console.info('Restoring to "%s"...' % target)
+        console.info('Restoring to: %s' % target)
 
     def build_compare_batch(self, batch):
         console.abort('Compare is not yet implemented for archived directories.')

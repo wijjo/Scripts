@@ -259,7 +259,7 @@ def configure(options):
     # Create the output directory as needed
     # TODO error handling
     if not options.no_tee and not os.path.exists(Global.output_directory):
-        print 'Creating output directory "%s"...' % Global.output_directory
+        print 'Creating output directory: %s' % Global.output_directory
         os.mkdir(Global.output_directory)
 
 #=========== Main ==============================================================

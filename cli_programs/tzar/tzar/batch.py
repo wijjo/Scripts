@@ -76,4 +76,4 @@ class TzarBatch(command.Batch):
 
     def add_source_deletion(self):
         if self.item.delete:
-            batch.add_command('rm', '-rvf', self.item.path)
+            self.add_command('rm', '-rvf', self.item.path)

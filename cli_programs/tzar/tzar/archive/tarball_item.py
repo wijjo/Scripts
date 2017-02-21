@@ -85,7 +85,7 @@ class TarballItem(BaseItem):
     def build_create_batch(self, batch):
         output_path = ''.join([self.archive, self.tar_extension])
         if batch.is_metered():
-            batch.add_command('echo', ('Creating "', output_path, '"...'))
+            batch.add_command('echo', ('Creating: ', output_path))
         batch.add_command('tar')
         batch.add_exclude_args('--exclude')
         batch.add_args(*self.tar_create_options)
@@ -99,7 +99,7 @@ class TarballItem(BaseItem):
     def build_restore_batch(self, batch):
         restore_to_dir = disk.get_versioned_path(os.path.basename(self.path)[:-len(self.tar_extension)])
         os.mkdir(restore_to_dir)
-        console.info('Restoring to "%s"...' % restore_to_dir)
+        console.info('Restoring to: %s' % restore_to_dir)
         #TODO: Untested
         batch.add_command('tar', self.tar_restore_options, self.path,
                           '--strip-components', '1', '-C', restore_to_dir)

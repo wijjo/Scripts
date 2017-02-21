@@ -87,8 +87,8 @@ class BaseItem(object):
     def check_output_directory(self):
         if not os.path.isdir(self.outputdir):
             if os.path.exists(self.outputdir):
-                console.abort('"%s" exists and is not a directory' % self.outputdir)
-            console.info('Creating %s...' % self.outputdir)
+                console.abort('Output directory exists and is not a directory: %s' % self.outputdir)
+            console.info('Creating output directory: %s' % self.outputdir)
             try:
                 os.mkdir(self.outputdir)
             except (IOError, OSError) as e:
