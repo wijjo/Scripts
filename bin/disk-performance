@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+
+import sys, os, re
+from lib import import_scriptbase
+from scriptbase.console import abort, error
+from scriptbase.command import Command
+
+RE_VOL = re.compile(r'^(/dev/disk[a-z0-9]+) on (.*) \(')
+RE_RES = re.compile(r'^(\d+) bytes transferred in ([\d.]+) secs \(([\d.]+) bytes/sec\)')
+
+def delete_temp_file(tmp_path):
+    if os.path.exists(tmp_path):
+        try:
+            os.remove(tmp_path)
+        except (IOError, OSError) as e:
+            error('Unable to delete temporary file: %s' % tmp_path, e)
+
+def test_op(op, ifile, ofile, blocks):
+    sys.stdout.write(' %5s: ' % op)
+    sys.stdout.flush()
+    with Command('dd', 'if=%s' % ifile, 'bs=2048k', 'of=%s' % ofile, 'count=%d' % blocks) as cmd:
+        for line in cmd:
+            s = line.decode('utf-8')
+            m = RE_RES.match(s)
+            if m:
+                mbps = float(m.group(3)) / (1024 * 1024)
+                print('%.1f MB/sec' % mbps)
+                break
+        else:
+            print('???')
+
+def test(volume):
+    print('Volume: %s' % volume)
+    tmp_dir = os.path.join(volume, 'tmp')
+    if not os.path.isdir(tmp_dir):
+        tmp_dir = volume
+    tmp_path = os.path.join(tmp_dir, 'disk-performance.tmp')
+    delete_temp_file(tmp_path)
+    try:
+        test_op('write', '/dev/zero', tmp_path, 1024)
+        os.system('sudo purge')
+        test_op('read', tmp_path, '/dev/zero', 1024)
+    finally:
+        delete_temp_file(tmp_path)
+    print('')
+
+def main():
+    if sys.platform != 'darwin':
+        abort('This has only been tested on the Mac platform.')
+    volumes = sys.argv[1:]
+    if volumes:
+        for volume in volumes:
+            test(volume)
+    else:
+        with Command('mount') as cmd:
+            for line in cmd:
+                m = RE_VOL.match(line.decode('utf-8'))
+                if m:
+                    test(m.group(2))
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(255)
