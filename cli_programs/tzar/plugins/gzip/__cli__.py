@@ -1,4 +1,4 @@
-# Copyright 2016 Steven Cooper
+# Copyright 2016-17 Steven Cooper
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,22 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""CLI implementation for "gzip" sub-command."""
+
 from glob import glob
+
+#pylint: disable=import-error
 from scriptbase.cli import Command
-from tzar.archive.base_item import ARCHIVE_CLI_ARGUMENTS, args_to_kwargs
-from tzar.archive.zip_item import ZipItem
+from tzar.archive.base_item import ARCHIVE_CLI_ARGUMENTS, option_attributes_to_dictionary
+from tzar.archive.tarball_item import TarballItem
 
 @Command(
-    name='zip',
-    description='Archive with zip compression.',
+    name='gz',
+    description='Archive with gzip compression.',
     args=ARCHIVE_CLI_ARGUMENTS
 )
 def _(runner):
     for path_pat in runner.arg.path:
         for path in glob(path_pat):
-            item = ZipItem(
-                        path,
-                        runner.cfg.data,
-                        **args_to_kwargs(runner.arg)
-                   )
+            item = TarballItem(
+                path,
+                "gzip",
+                runner.cfg.data,
+                **option_attributes_to_dictionary(runner.arg)
+            )
             item.create(runner)

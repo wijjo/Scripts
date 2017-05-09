@@ -1,39 +1,71 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
+# Copyright 2016-17 Steven Cooper
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-import sys, os, glob
+"""Copy an OS X or MacOS installer to an external, e.g. USB, drive."""
 
-def main():
-    if len(sys.argv) != 2:
-        sys.stderr.write('Usage: %s USB_VOLUME_PATH\n' % os.path.dirname(sys.argv[0]))
-        sys.exit(1)
-    usb_volume = sys.argv[1]
-    if not os.path.isdir(usb_volume):
-        sys.stderr.write('ERROR: USB volume not found: %s' % usb_volume)
-        sys.exit(1)
-    installer_app = None
-    createinstallmedia = None
+import sys
+import os
+import glob
+import shlex
+
+
+def find_install_media():
+    """Return install media information if found."""
+    installer_app_path = None
+    createinstallmedia_path = None
     for app in glob.glob('/Applications/Install*.app'):
         cim_chk = '%s/Contents/Resources/createinstallmedia' % app
         if os.path.exists(cim_chk):
-            installer_app = app
-            createinstallmedia = cim_chk
-    if not installer_app or not createinstallmedia:
-        sys.stderr.write('OS X Installer not found.\n')
-        sys.exit(1)
+            installer_app_path = app
+            createinstallmedia_path = cim_chk
+    if not installer_app_path or not createinstallmedia_path:
+        sys.stderr.write('MacOS Installer not found.\n')
+        raise SystemExit(255)
+    return installer_app_path, createinstallmedia_path
 
-    cmd = 'sudo "%(createinstallmedia)s" --volume "%(usb_volume)s" --applicationpath "%(installer_app)s" --nointeraction' % locals()
-    print '''
-    Installer: %(installer_app)s
-Media creator: %(createinstallmedia)s
-   USB Volume: %(usb_volume)s
-      Command: %(cmd)s
-''' % locals()
-    raw_input('Press Enter to continue or Ctrl-C to abort:')
-    os.system(cmd)
+
+def installer_to_usb(usb_volume):
+    """Copy install media to USB drive."""
+    installer_app_path, createinstallmedia_path = find_install_media()
+    cmd = (' '.join(['sudo', shlex.quote(createinstallmedia_path),
+                     '--volume', shlex.quote(usb_volume),
+                     '--applicationpath', shlex.quote(installer_app_path),
+                     '--nointeraction']))
+    print('\n'.join(['%13s: %s' % (label, value) for label, value in [
+        ('Installer', installer_app_path),
+        ('Media creator', createinstallmedia_path),
+        ('USB Volume', usb_volume),
+        ('Command', cmd),
+    ]]))
+    input('\nPress Enter to continue or Ctrl-C to abort:')
+    return_code = os.system(cmd)
+    if return_code != 0:
+        raise SystemExit(return_code)
+
+
+def main():
+    """Main function."""
+    if len(sys.argv) != 2:
+        sys.stderr.write('Usage: %s USB_VOLUME_PATH\n' % os.path.dirname(sys.argv[0]))
+        sys.exit(1)
+    return installer_to_usb(sys.argv[1])
+
 
 if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
-        print'\nABORT'
+        print('\nABORT')
         sys.exit(1)

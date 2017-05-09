@@ -1,59 +1,80 @@
 #!/usr/bin/env python
+# Copyright 2016-17 Steven Cooper
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-import sys
+"""Perform various image manipulations using ImageMagick."""
+
 import os
 import glob
 import re
 
+#pylint: disable=unused-import,import-error
 from lib import import_scriptbase
 from scriptbase import cli, console, command
 
 # Matches identity output without the file name at the front.
-re_identify = re.compile(r'(\w+)\s+(\d+)x(\d+)\s+(\d+)x(\d+)[+](\d+)[+](\d+)\s+.*', re.IGNORECASE)
+RE_IDENTIFY = re.compile(r'(\w+)\s+(\d+)x(\d+)\s+(\d+)x(\d+)[+](\d+)[+](\d+)\s+.*', re.IGNORECASE)
 
 class Chopper(object):
+    """Image chopper."""
 
-    def __init__(self, xgrid, ygrid, xoffset, yoffset, dryrun):
+    def __init__(self, xgrid, ygrid, xoffset, yoffset, dryrun): #pylint: disable=too-many-arguments
+        """Chopper constructor."""
         self.xgrid = xgrid
         self.ygrid = ygrid
         self.xoffset = xoffset
         self.yoffset = yoffset
         self.dryrun = dryrun
 
-    def identify(self, path):
+    @classmethod
+    def identify(cls, path):
+        """Identify an image."""
         width = height = None
         with command.Command('identify', path) as cmd:
             for line in cmd:
-                output = line[len(path)+1:]
-                m = re_identify.search(line)
-                if not m is None:
-                    width = int(m.group(2))
-                    height = int(m.group(3))
+                matched = RE_IDENTIFY.search(line)
+                if not matched is None:
+                    width = int(matched.group(2))
+                    height = int(matched.group(3))
             if width is None:
                 raise Exception('Unable to indentify image file: %s' % path)
         return (width, height)
 
 
-    def chop(self, path, base=None):
+    def chop(self, path, base=None):                            #pylint: disable=too-many-locals
+        """Chop an image."""
         (image_width, image_height) = self.identify(path)
         width = image_width / self.xgrid
         height = image_height / self.ygrid
-        id = 0
+        index = 0
+        #pylint: disable=invalid-name
         for ygrid in range(self.ygrid):
             y = self.yoffset + (height * ygrid)
             for xgrid in range(self.xgrid):
-                id += 1
+                index += 1
                 x = self.xoffset + (width * xgrid)
                 geometry = '%sx%s+%s+%s' % (width, height, x, y)
                 if base is None:
                     name = os.path.splitext(os.path.basename(path))[0]
                 else:
                     name = base
-                path_out = '%(name)s-%(id)s.png' % locals()
+                path_out = '{name}-{index}.png'.format(name=name, index=index)
                 console.info(path_out)
-                cmd = 'convert %(path)s -crop %(geometry)s %(path_out)s' % locals()
+                cmd = 'convert {path} -crop {geometry} {path_out}'.format(
+                    path=path, geometry=geometry, path_out=path_out)
                 if self.dryrun:
-                    print cmd
+                    print(cmd)
                 else:
                     if os.system(cmd) != 0:
                         console.abort('Crop operation failed.')
@@ -70,6 +91,7 @@ class Chopper(object):
     ],
 )
 def chop(runner):
+    """Command to chop an image."""
     chopper = Chopper(runner.arg.xgrid,
                       runner.arg.ygrid,
                       runner.arg.xoffset,
@@ -80,9 +102,8 @@ def chop(runner):
             if os.path.exists(path):
                 with command.Command('identify', arg) as cmd:
                     for line in cmd:
-                        output = line[len(path)+1:]
-                        m = re_identify.search(line)
-                        if not m is None:
+                        matched = RE_IDENTIFY.search(line)
+                        if not matched is None:
                             chopper.chop(path, base=runner.arg.output_base)
                         else:
                             console.error(line)
@@ -98,31 +119,47 @@ Uses the input file base name as the output file base name.''',
     ],
 )
 def ios_icons(runner):
+    """Command to convert to iOS icons."""
     for arg in runner.arg.input_image:
         for path in glob.glob(os.path.expanduser(os.path.expandvars(arg))):
             if os.path.exists(path):
-                def resize(pixels, *copies):
-                    if runner.arg.output_base is None:
-                        basename = os.path.splitext(os.path.basename(path))[0]
-                    else:
-                        basename = runner.arg.output_base
-                    for copy in copies:
-                        output = '%(basename)s-%(copy)s.png' % locals()
-                        command = 'convert -resize %(pixels)sx%(pixels)s %(path)s %(output)s' % locals()
-                        if runner.arg.dryrun:
-                            print command
-                        else:
-                            print output
-                            os.system(command)
-                resize(29, 'ipad-settings-1x')
-                resize(40, 'ipad-spotlight-1x')
-                resize(58, 'iphone-settings-2x', 'ipad-settings-2x')
-                resize(76, 'ipad-app-1x')
-                resize(80, 'iphone-spotlight-2x', 'ipad-spotlight-2x')
-                resize(87, 'iphone-settings-3x')
-                resize(120, 'iphone-spotlight-3x', 'iphone-app-2x')
-                resize(152, 'ipad-app-2x')
-                resize(180, 'iphone-app-3x')
+                if runner.arg.output_base is None:
+                    basename = os.path.splitext(os.path.basename(path))[0]
+                else:
+                    basename = runner.arg.output_base
+                resize_ios_icon(path, basename, 29, runner.args.dryrun,
+                                'ipad-settings-1x')
+                resize_ios_icon(path, basename, 40, runner.args.dryrun,
+                                'ipad-spotlight-1x')
+                resize_ios_icon(path, basename, 58, runner.args.dryrun,
+                                'iphone-settings-2x', 'ipad-settings-2x')
+                resize_ios_icon(path, basename, 76, runner.args.dryrun,
+                                'ipad-app-1x')
+                resize_ios_icon(path, basename, 80, runner.args.dryrun,
+                                'iphone-spotlight-2x', 'ipad-spotlight-2x')
+                resize_ios_icon(path, basename, 87, runner.args.dryrun,
+                                'iphone-settings-3x')
+                resize_ios_icon(path, basename, 120, runner.args.dryrun,
+                                'iphone-spotlight-3x', 'iphone-app-2x')
+                resize_ios_icon(path, basename, 152, runner.args.dryrun,
+                                'ipad-app-2x')
+                resize_ios_icon(path, basename, 180, runner.args.dryrun,
+                                'runner.args.dryrun, iphone-app-3x')
+
+
+def resize_ios_icon(path, basename, pixels, dryrun, *copies):
+    """Resize an iOS icon."""
+    for copy in copies:
+        output = '{basename}-{copy}.png'.format(basename=basename, copy=copy)
+        resize_command = (
+            'convert -resize {pixels}x{pixels} {path} {output}'.format(
+                pixels=pixels, path=path, output=output))
+        if dryrun:
+            print(resize_command)
+        else:
+            print(output)
+            os.system(resize_command)
+
 
 @cli.Main(
     description='Assorted image file operations.',
@@ -130,6 +167,7 @@ def ios_icons(runner):
     support_dryrun=True,
 )
 def main(runner):
+    """Main function."""
     console.set_verbose(runner.arg.verbose)
 
 

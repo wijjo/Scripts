@@ -1,4 +1,4 @@
-# Copyright 2016 Steven Cooper
+# Copyright 2016-17 Steven Cooper
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,23 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""CLI implementation for "lzip" sub-command."""
+
 from glob import glob
+
+#pylint: disable=import-error
 from scriptbase.cli import Command
-from tzar.archive.base_item import ARCHIVE_CLI_ARGUMENTS, args_to_kwargs
-from tzar.archive.factory import item_for_path
+from tzar.archive.base_item import ARCHIVE_CLI_ARGUMENTS, option_attributes_to_dictionary
+from tzar.archive.tarball_item import TarballItem
 
 @Command(
-    name='put',
-    description='Archive using a straight copy.',
+    name='lz',
+    description='Archive with lzip compression.',
     args=ARCHIVE_CLI_ARGUMENTS
 )
 def _(runner):
     for path_pat in runner.arg.path:
         for path in glob(path_pat):
-            item = item_for_path(
+            item = TarballItem(
                 path,
-                runner.var.program_name,
+                "lzip",
                 runner.cfg.data,
-                **args_to_kwargs(runner.arg)
+                **option_attributes_to_dictionary(runner.arg)
             )
             item.create(runner)

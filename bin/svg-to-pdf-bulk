@@ -1,30 +1,46 @@
 #!/usr/bin/env python
+# Copyright 2016-17 Steven Cooper
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Convert SVG files to PDF files."""
 
 import sys
 import os
 
 def iter_svg(root):
-    for dir, subdirs, files in os.walk(root):
-        for file in files:
-            if os.path.splitext(file)[1].lower() == '.svg':
-                yield os.path.join(dir, file)
+    """Iterate SVG file paths."""
+    for dir_path, sub_dir_paths, file_names in os.walk(root):   #pylint: disable=unused-variable
+        for file_name in file_names:
+            if os.path.splitext(file_name)[1].lower() == '.svg':
+                yield os.path.join(dir_path, file_name)
+
 
 def main():
+    """Main function."""
     failed = []
     for svg in iter_svg('.'):
         pdf = '%s.pdf' % os.path.splitext(svg[2:])[0]
         if os.system('inkscape -z -A "%s" "%s"' % (pdf, svg)) == 0:
-            print '::: SUCCEEDED: %s' % svg
+            print('::: SUCCEEDED: %s' % svg)
             os.system('rm -vf "%s"' % svg)
         else:
-            print '*** FAILED: %s' % svg
+            print('*** FAILED: %s' % svg)
             failed.append(svg)
     if failed:
-        print '''
-=== FAILED ===
-
-%s''' % '\n'.join(failed)
+        print(os.linesep.join(['=== FAILED ===', ''] + failed))
         sys.exit(1)
+
 
 if __name__ == '__main__':
     main()

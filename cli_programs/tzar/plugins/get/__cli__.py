@@ -1,4 +1,4 @@
-# Copyright 2016 Steven Cooper
+# Copyright 2016-17 Steven Cooper
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,11 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from scriptbase.cli import Command
+"""CLI implementation for "get" sub-command."""
+
+#pylint: disable=import-error
+from scriptbase.cli import Command, String
+from tzar.archive.base_item import option_attributes_to_dictionary
+from tzar.choose import choose_archive
 
 @Command(
-    name='generate-rc',
-    description='Generate sample RC file to working directory.',
+    name='get',
+    description='Restore from archive.',
+    args=[
+        String('path', 'path(s) to restore', nargs='+'),
+    ]
 )
 def _(runner):
-    runner.cfg.generate()
+    for name in runner.arg.path:
+        item = choose_archive(name, **option_attributes_to_dictionary(runner.arg))
+        item.restore(runner)

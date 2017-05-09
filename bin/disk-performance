@@ -1,35 +1,58 @@
 #!/usr/bin/env python3
+# Copyright 2016-17 Steven Cooper
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-import sys, os, re
-from lib import import_scriptbase
-from scriptbase.console import abort, error
-from scriptbase.command import Command
+"""Simple disk performance test."""
+
+import sys
+import os
+import re
+
+from lib import import_scriptbase           #pylint: disable=unused-import
+from scriptbase.console import abort, error #pylint: disable=import-error
+from scriptbase.command import Command      #pylint: disable=import-error
 
 RE_VOL = re.compile(r'^(/dev/disk[a-z0-9]+) on (.*) \(')
 RE_RES = re.compile(r'^(\d+) bytes transferred in ([\d.]+) secs \(([\d.]+) bytes/sec\)')
 
+
 def delete_temp_file(tmp_path):
+    """Delete the temporary test file."""
     if os.path.exists(tmp_path):
         try:
             os.remove(tmp_path)
-        except (IOError, OSError) as e:
-            error('Unable to delete temporary file: %s' % tmp_path, e)
+        except (IOError, OSError) as exc:
+            error('Unable to delete temporary file: %s' % tmp_path, exc)
 
-def test_op(op, ifile, ofile, blocks):
-    sys.stdout.write(' %5s: ' % op)
+
+def test_operation(operation, ifile, ofile, blocks):
+    """Test a "read" or "write" operation."""
+    sys.stdout.write(' %5s: ' % operation)
     sys.stdout.flush()
     with Command('dd', 'if=%s' % ifile, 'bs=2048k', 'of=%s' % ofile, 'count=%d' % blocks) as cmd:
         for line in cmd:
-            s = line.decode('utf-8')
-            m = RE_RES.match(s)
-            if m:
-                mbps = float(m.group(3)) / (1024 * 1024)
+            matched = RE_RES.match(line)
+            if matched:
+                mbps = float(matched.group(3)) / (1024 * 1024)
                 print('%.1f MB/sec' % mbps)
                 break
         else:
             print('???')
 
+
 def test(volume):
+    """Test a volume."""
     print('Volume: %s' % volume)
     tmp_dir = os.path.join(volume, 'tmp')
     if not os.path.isdir(tmp_dir):
@@ -37,14 +60,16 @@ def test(volume):
     tmp_path = os.path.join(tmp_dir, 'disk-performance.tmp')
     delete_temp_file(tmp_path)
     try:
-        test_op('write', '/dev/zero', tmp_path, 1024)
+        test_operation('write', '/dev/zero', tmp_path, 1024)
         os.system('sudo purge')
-        test_op('read', tmp_path, '/dev/zero', 1024)
+        test_operation('read', tmp_path, '/dev/zero', 1024)
     finally:
         delete_temp_file(tmp_path)
     print('')
 
+
 def main():
+    """Main function."""
     if sys.platform != 'darwin':
         abort('This has only been tested on the Mac platform.')
     volumes = sys.argv[1:]
@@ -54,9 +79,9 @@ def main():
     else:
         with Command('mount') as cmd:
             for line in cmd:
-                m = RE_VOL.match(line.decode('utf-8'))
-                if m:
-                    test(m.group(2))
+                matched = RE_VOL.match(line)
+                if matched:
+                    test(matched.group(2))
 
 if __name__ == '__main__':
     try:

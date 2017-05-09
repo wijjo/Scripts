@@ -1,4 +1,4 @@
-# Copyright 2016 Steven Cooper
+# Copyright 2016-17 Steven Cooper
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -48,13 +48,12 @@
 #       default options for different directories, e.g. to always exclude local
 #       temporary files from the archive.
 
-from glob import glob
+"""Tzar archiving front-end CLI main."""
 
-from scriptbase.command import BatchError, BatchFailure
+#pylint: disable=import-error
 from scriptbase.shell import find_executable
-from scriptbase.cli import Main, main, Command, Boolean, String
-from scriptbase.console import abort, set_verbose
-from scriptbase.configuration import ConfigSpec, Config
+from scriptbase.cli import Main
+from scriptbase.configuration import ConfigSpec
 
 
 CFG_SPECS = [
@@ -113,7 +112,7 @@ CFG_SPECS = [
     ),
     ConfigSpec(
         'OUTPUT_DIRECTORY',
-        '.%(program_name)s',
+        '{program_name}',
         'Output subdirectory name.'
     ),
     ConfigSpec(
@@ -138,7 +137,7 @@ CFG_SPECS = [
     ),
     ConfigSpec(
         'VCS_DIRECTORIES',
-        [ '.svn', '.cvs', '.git' ],
+        ['.svn', '.cvs', '.git'],
         'VCS directory names that are optionally ignored.'
     ),
 ]
@@ -151,5 +150,5 @@ CFG_SPECS = [
     support_pause=True,
     support_discovery=True,
 )
-def _(runner):
+def _(runner):  #pylint: disable=unused-argument
     pass

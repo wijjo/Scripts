@@ -1,27 +1,56 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
+# Copyright 2016-17 Steven Cooper
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Git convenience command/sub-commands."""
 
 import sys
 import os
 import time
 import zipfile
+from contextlib import contextmanager
 
+#pylint: disable=unused-import
 from lib import import_scriptbase
-from scriptbase import cli, git, console, command, utility
+#pylint: disable=import-error
+from scriptbase import cli
+from scriptbase import git
+from scriptbase import console
+from scriptbase import command
+from scriptbase import shell
+from scriptbase import utility
 
 
-#===============================================================================
+@contextmanager
+def project_root_context():
+    """Temporarily change the working directory to the project root."""
+    save_dir = os.getcwd()
+    os.chdir(git.git_project_root())
+    yield
+    os.chdir(save_dir)
+
+
 @cli.Main(
     description='Assorted higher level commands for working in a Git environment.',
     support_verbose=True,
     support_dryrun=True,
     support_pause=True,
 )
-#===============================================================================
 def _main(runner):
     console.set_verbose(runner.arg.verbose)
 
 
-#===============================================================================
 @cli.Command(
     aliases=['st'],
     description='Show pending changes and other status.',
@@ -30,24 +59,23 @@ def _main(runner):
         cli.Boolean('time', 'order by time instead of name', '-t', '--time'),
     ],
 )
-#===============================================================================
 def status(runner):
-    root_dir = git.git_project_root()
-    save_dir = os.getcwd()
-    os.chdir(root_dir)
-    try:
+    """Status command implementation."""
+    with project_root_context():
         def _display(submodule=None):
             header_displayed = False
             def _header():
-                url = git.get_repository_url()
-                local = git.get_local_branch()
-                tracking = git.get_tracking_branch()
                 if submodule:
-                    print 'Submodule: %s' % submodule
-                print '''\
-      URL: %(url)s
-   Branch: %(local)s
-   Tracks: %(local)s''' % locals()
+                    print('Submodule: %s' % submodule)
+                print(os.linesep.join([
+                    '      URL: {url}',
+                    '   Branch: {local}',
+                    '   Tracks: {local}'
+                ]).format(
+                    url=git.get_repository_url(),
+                    local=git.get_local_branch(),
+                    tracking=git.get_tracking_branch()
+                ))
             if not submodule and not runner.arg.short:
                 _header()
                 header_displayed = True
@@ -58,23 +86,19 @@ def status(runner):
                     _header()
                     header_displayed = True
                 if runner.arg.short:
-                    print path
+                    print(path)
                 else:
                     try:
                         col1 = time.strftime('%x  %X', time.localtime(os.stat(path).st_mtime))
                     except OSError:
                         col1 = '(deleted)'
-                    print '%3s  %17s  %s' % (change.flag, col1, path)
+                    print('%3s  %17s  %s' % (change.flag, col1, path))
         _display()
         for submodule in git.iter_submodules():
-            os.chdir(submodule)
-            _display(submodule)
-            os.chdir(root_dir)
-    finally:
-        os.chdir(save_dir)
+            with utility.working_directory_context(submodule):
+                _display(submodule)
 
 
-#===============================================================================
 @cli.Command(
     description='Archive uncommitted changes and capture a patch diff.',
     args=[
@@ -82,71 +106,65 @@ def status(runner):
         cli.String('output', 'output directory', '-o', '--output', default='../WIP'),
     ],
 )
-#===============================================================================
 def snapshot(runner):
+    """Snapshot command implementation."""
 
-    root_dir = git.git_project_root()
-    save_dir = os.getcwd()
-    os.chdir(root_dir)
+    with project_root_context():
 
-    root_name = os.path.basename(root_dir)
-    branch_name = git.get_local_branch().replace('/', '_')
-    timestamp = time.strftime('%y%m%d-%H%M%S')
-    output_name = '-'.join([timestamp, root_name, branch_name])
-    output_dir = os.path.join(runner.arg.output, output_name)
-    zip_name = 'changed-and-new.zip' if runner.arg.all else 'changed.zip'
-    zip_path = os.path.join(output_dir, zip_name)
-    zip_path_abs = os.path.realpath(zip_path)
-    diff_name = 'patch.diff'
-    diff_path = os.path.join(output_dir, diff_name)
-    diff_path_abs = os.path.realpath(diff_path)
+        output_dir = os.path.join(
+            runner.arg.output,
+            '-'.join([
+                time.strftime('%y%m%d-%H%M%S'),
+                os.path.basename(os.getcwd()),
+                git.get_local_branch().replace('/', '_')
+            ])
+        )
+        zip_path = os.path.realpath(os.path.join(
+            output_dir,
+            'changed-and-new.zip' if runner.arg.all else 'changed.zip'
+        ))
+        diff_path = os.path.realpath(os.path.join(output_dir, 'patch.diff'))
 
-    console.info('Base directory (Git project root):', [root_dir])
-    console.info('Output directory:', [output_dir])
+        console.info('Base directory (Git project root):', [os.getcwd()])
+        console.info('Output directory:', [output_dir])
 
-    if not runner.arg.dryrun:
-        os.makedirs(output_dir)
-
-    try:
+        if not runner.arg.dryrun:
+            os.makedirs(output_dir)
 
         file_paths = []
 
-        console.info('Archive: %s' % zip_name)
+        console.info('Archive: %s' % os.path.basename(zip_path))
 
         for change in git.iter_changes(submodules=True):
             if change.flag.startswith('R'):
                 file_paths.append(change.path2)
-            elif change.flag != 'D' and change.path != zip_path_abs:
+            elif change.flag != 'D' and change.path != zip_path:
                 if runner.arg.all or change.flag != '??':
                     if runner.arg.dryrun:
                         sys.stdout.write('+%s%s' % (change.path, os.linesep))
                     file_paths.append(change.path)
 
         if not file_paths:
-            console.info('Nothing to archive: %s' % root_name)
+            console.info('Nothing to archive: %s' % os.path.basename(os.getcwd()))
 
         if not runner.arg.dryrun and file_paths:
-            zip_file = zipfile.ZipFile(zip_path_abs, 'w', zipfile.ZIP_DEFLATED)
+            zip_file = zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED)
             for path in file_paths:
                 if runner.arg.verbose:
                     sys.stdout.write('+%s%s' % (path, os.linesep))
                 zip_file.write(path)
             zip_file.close()
 
-        console.info('Patch diff: %s' % diff_name)
+        console.info('Patch diff: %s' % os.path.basename(diff_path))
 
         if not runner.arg.dryrun:
-            with open(diff_path_abs, 'w') as diff_file:
+            with open(diff_path, 'w') as diff_file:
                 with command.Command('git', 'diff') as gitcmd:
                     for line in gitcmd:
                         diff_file.write(line)
                         diff_file.write(os.linesep)
 
-    finally:
-        os.chdir(save_dir)
 
-
-#===============================================================================
 @cli.Command(
     description='Make a new branch.',
     args=[
@@ -154,8 +172,8 @@ def snapshot(runner):
         cli.String('branch', 'branch name'),
     ],
 )
-#===============================================================================
 def new(runner):
+    """New command implementation."""
     runner.var.folder = runner.arg.branch
     runner.shell('git fetch')
     runner.shell('git checkout master')
@@ -168,20 +186,18 @@ def new(runner):
                       verbose=runner.arg.verbose)
 
 
-#===============================================================================
 @cli.Command(
     description='List my branches and unmerged commits.',
 )
-#===============================================================================
-def branches(runner):
+def branches(runner):   #pylint: disable=unused-argument
+    """Branches command implementation."""
     info = git.get_info()
-    for branch in git.iter_branches(user = info.user.name):
+    for branch in git.iter_branches(user=info.user.name):
         sys.stdout.write('%s%s' % (branch, os.linesep))
         for commit in git.iter_unmerged_commits(branch):
             sys.stdout.write('   %s %s%s' % (commit.identifier, commit.comment, os.linesep))
 
 
-#===============================================================================
 @cli.Command(
     description='Rename local and remote branch.',
     args=[
@@ -189,54 +205,39 @@ def branches(runner):
         cli.String('branch', 'branch name'),
     ],
 )
-#===============================================================================
 def rename(runner):
-    runner.var.newlocal = runner.arg.branch
-    if runner.arg.remotename:
-        runner.var.newremote = runner.arg.remotename
-    else:
-        runner.var.newremote = runner.var.newlocal
-    with command.Command('git', 'status') as gitcmd:
-        for s in gitcmd:
-            if s.startswith('# On branch '):
-                runner.var.oldbranch = s[12:]
-                break
-        else:
-            console.abort('Not in a GitHub-managed folder.')
-    runner.shell('git branch -m %(oldbranch)s %(newlocal)s')
-    runner.shell('git push origin %(newremote)s')
-    runner.shell('git branch --set-upstream %(newlocal)s origin/%(newremote)s')
+    """Rename command implementation."""
+    git.rename_branch(runner.arg.branch,
+                      rename_remote=True,
+                      remote_name=runner.arg.remotename,
+                      dryrun=runner.arg.dryrun)
 
 
-#===============================================================================
 @cli.Command(
-    description='Submit a pull request for review.',
+    description='Use "hub" command to submit a pull request for review.',
     args=[
         cli.String('title', 'pull request title'),
     ],
 )
-#===============================================================================
 def review(runner):
+    """Review command implementation."""
     tracking_branch = git.get_tracking_branch()
     branch = tracking_branch.split('/')[1]
-    if not utility.find_executable('hub'):
+    if not shell.find_executable('hub'):
         console.abort('The hub command must be installed. (http://defunkt.io/hub/)',
                       'OS X Homebrew command: brew install hub')
     runner.shell('hub pull-request "%s" -b %s' % (runner.arg.title, branch))
 
 
-#===============================================================================
 @cli.Command(
     description='Display the repository URL.',
     args=[
     ],
 )
-#===============================================================================
-def url(runner):
-    print git.get_repository_url()
+def url(runner):    #pylint: disable=unused-argument
+    """URL command implementation."""
+    print(git.get_repository_url())
 
 
-#===============================================================================
 if __name__ == '__main__':
-#===============================================================================
     cli.main()

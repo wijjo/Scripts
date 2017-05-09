@@ -12,37 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""P7Zip-compressed archive item."""
+"""Uncompressed file or directory archive item."""
+
+import os
 
 #pylint: disable=import-error
 from scriptbase import console
+from scriptbase import disk
 
 from .base_item import BaseItem
 
-class P7ZipItem(BaseItem):
-    """P7Zip-compressed archive item."""
+class UncompressedItem(BaseItem):
+    """Uncompressed file or directory archive item."""
 
     @classmethod
-    def item_for_path_if_matching(cls, path, parsed_name, config_data, **kwargs):
-        """Create an archive item if it has the appropriate extension."""
-        if parsed_name.extension == '7z':
-            return P7ZipItem(path, config_data, **kwargs)
+    def item_for_path_if_matching(cls, path, parsed_name, config_data, **kwargs):   #pylint: disable=unused-argument
+        """Create an archive item if the file or directory exists."""
+        if os.path.exists(path):
+            return UncompressedItem(path, config_data, **kwargs)
 
     def __init__(self, path, config_data, **kwargs):
         """Construct archive item."""
         BaseItem.__init__(self, path, config_data, **kwargs)
 
-    def build_create_batch(self, batch):
+    def build_create_batch(self, batch):    #pylint: disable=no-self-use
         """Populate a command batch for creating the archive."""
-        batch.add_command('7za', 'a')
-        batch.add_exclude_args('-xr!')
-        batch.add_args((self.archive, '.7z'), self.path)
-        batch.add_source_deletion()
+        batch.add_archive_copy_move_command()
 
-    def build_restore_batch(self, batch):   #pylint: disable=no-self-use,unused-argument
+    def build_restore_batch(self, batch):
         """Populate a command batch for restoring the archive."""
-        console.abort('Restore is not yet implemented for p7zip compression.')
+        target = disk.get_versioned_path(self.path)
+        batch.add_copy_command(self.path, target)
+        console.info('Restoring to: %s' % target)
 
     def build_compare_batch(self, batch):   #pylint: disable=no-self-use,unused-argument
         """Populate a command batch for comparing against the archive."""
-        console.abort('Compare is not yet implemented for p7zip compression.')
+        console.abort('Compare is not yet implemented for uncompressed archive items.')

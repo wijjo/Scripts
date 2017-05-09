@@ -1,4 +1,4 @@
-# Copyright 2016 Steven Cooper
+# Copyright 2016-17 Steven Cooper
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""CLI implementation for "cmp" sub-command."""
+
+#pylint: disable=import-error
 from scriptbase.cli import Command, String
-from tzar.archive.base_item import args_to_kwargs
+from tzar.archive.base_item import option_attributes_to_dictionary
 from tzar.choose import choose_archive
 
 @Command(
@@ -25,5 +28,5 @@ from tzar.choose import choose_archive
 )
 def _(runner):
     for name in runner.arg.path:
-        item = choose_archive(name, **args_to_kwargs(runner.arg))
+        item = choose_archive(name, **option_attributes_to_dictionary(runner.arg))
         item.compare(runner)

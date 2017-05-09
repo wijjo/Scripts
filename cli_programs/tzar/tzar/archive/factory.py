@@ -1,4 +1,4 @@
-# Copyright 2016 Steven Cooper
+# Copyright 2016-17 Steven Cooper
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,18 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Factory creation of archive items."""
+
 import re
 
+#pylint: disable=import-error
+from scriptbase import console
+
 from .compressed_file_item import CompressedFileItem
-from .file_item import FileItem
-from .directory_item import DirectoryItem
+from .uncompressed_item import UncompressedItem
 from .p7zip_item import P7ZipItem
 from .tarball_item import TarballItem
 from .zip_item import ZipItem
 
-TRAILER_PAT = '^[.]%s/(.*)-([0-9]+-[0-9]+)(?:[.](tar))?[.](\w+)$'
+TRAILER_PAT = r'^[.]%s/(.*)-([0-9]+-[0-9]+)(?:[.](tar))?[.](\w+)$'
 
-class ParsedName(object):
+class _ParsedName(object):
     def __init__(self, base_path, time_string, extension_prefix, extension):
         self.base_path = base_path
         self.time_string = time_string
@@ -31,19 +35,19 @@ class ParsedName(object):
         self.extension_prefix = extension_prefix
 
 def item_for_path(path, program_name, config_data, **item_kwargs):
+    """Create an appropriate archive item for a path."""
     for item_cls in (
             TarballItem,
             ZipItem,
             P7ZipItem,
-            DirectoryItem,
-            FileItem,
+            UncompressedItem,
             CompressedFileItem,
     ):
-        m = re.match(TRAILER_PAT % program_name, path)
-        if m:
-            parsed_name = ParsedName(*m.groups())
+        matched = re.match(TRAILER_PAT % program_name, path)
+        if matched:
+            parsed_name = _ParsedName(*matched.groups())
         else:
-            parsed_name = ParsedName(path, None, None, None)
+            parsed_name = _ParsedName(path, None, None, None)
         item = item_cls.item_for_path_if_matching(path, parsed_name, config_data, **item_kwargs)
         if item:
             return item

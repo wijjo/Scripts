@@ -1,17 +1,31 @@
 #!/usr/bin/env python3
+# Copyright 2016-17 Steven Cooper
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-import sys
-import os
+"""Test Human Resource Machine code."""
+
 from argparse import ArgumentParser
-import yaml
 import copy
 import inspect
 import collections
+import yaml
 
 
 # Make YAML use ordered dictionaries so that code blocks are ordered.
 # http://stackoverflow.com/questions/5121931/in-python-how-can-you-load-yaml-mappings-as-ordereddicts
 def dict_constructor(loader, node):
+    """Convert YAML node pairs to an ordered dictionary."""
     return collections.OrderedDict(loader.construct_pairs(node))
 yaml.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, dict_constructor)
 
@@ -19,101 +33,129 @@ yaml.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, dict_constr
 NUM_REGISTERS = 10
 
 class CompileError(Exception):
+    """Code compilation error."""
     pass
 
 
 class CompilerInternalError(Exception):
+    """Code compilation internal error."""
     pass
 
 
 class RunError(Exception):
+    """Runtime error."""
     pass
 
 
 class InboxEmpty(Exception):
+    """Error for an empty inbox."""
     pass
 
 
 def _instruction_trace_string(line_num, instruction):
     sline_num = '(%d)' % line_num
     sargs = ' '.join(['{}'.format(arg) for arg in instruction.args])
-    return '%6s %s %s' % (sline_num, instruction.op, sargs)
+    return '%6s %s %s' % (sline_num, instruction.op_code, sargs)
 
 
 class InstructionSet:
+    """The instruction set op_code-codes for HRM actions."""
 
     @staticmethod
-    def INBOX(machine_state):
+    def INBOX(machine_state):                       #pylint: disable=invalid-name
+        """Move from the inbox to the current item."""
         machine_state.write_current(machine_state.read_inbox())
 
     @staticmethod
-    def OUTBOX(machine_state):
+    def OUTBOX(machine_state):                      #pylint: disable=invalid-name
+        """Move the current item to the outbox."""
         machine_state.write_outbox(machine_state.read_current())
         machine_state.clear_current()
 
     @staticmethod
-    def COPY_TO(machine_state, register):
+    def COPY_TO(machine_state, register):           #pylint: disable=invalid-name
+        """Copy the current item to a register."""
         machine_state.write_register(register, machine_state.read_current())
 
     @staticmethod
-    def COPY_FROM(machine_state, register):
+    def COPY_FROM(machine_state, register):         #pylint: disable=invalid-name
+        """Copy from a register to the current item."""
         machine_state.write_current(machine_state.read_register(register))
 
     @staticmethod
-    def ADD(machine_state, register):
+    def ADD(machine_state, register):               #pylint: disable=invalid-name
+        """Add a number in a register to the current item."""
         machine_state.write_current(
             machine_state.read_current_int() + machine_state.read_register_int(register))
 
     @staticmethod
-    def SUB(machine_state, register):
+    def SUB(machine_state, register):               #pylint: disable=invalid-name
+        """Subtract a number in a register from the current item."""
         machine_state.write_current(
             machine_state.read_current_int() - machine_state.read_register_int(register))
 
     @staticmethod
-    def BUMP(machine_state, increment, register):
-        machine_state.write_register(register,
+    def BUMP(machine_state, increment, register):   #pylint: disable=invalid-name
+        """Increment a number in a register."""
+        machine_state.write_register(
+            register,
             machine_state.read_register_int(register) + increment)
 
     @staticmethod
-    def JUMP(machine_state, location):
+    def JUMP(machine_state, location):              #pylint: disable=invalid-name
+        """Jump to a code location."""
         machine_state.jump_to_location(location)
 
     @staticmethod
-    def JUMP_IF_ZERO(machine_state, location):
+    def JUMP_IF_ZERO(machine_state, location):      #pylint: disable=invalid-name
+        """Jump to a code location if the current item is zero."""
         if machine_state.read_current_int() == 0:
             machine_state.jump_to_location(location)
 
     @staticmethod
-    def JUMP_IF_NEGATIVE(machine_state, location):
+    def JUMP_IF_NEGATIVE(machine_state, location):  #pylint: disable=invalid-name
+        """Jump to a code location if the current item is negative."""
         if machine_state.read_current_int() < 0:
             machine_state.jump_to_location(location)
 
 
 class Program:
+    """A program is a list of instructions."""
+
     def __init__(self):
         self.instructions = []
 
 
 class Instruction:
-    def __init__(self, op, func, args):
-        self.op = op
+    """An instruction has an op_code, function, and arguments."""
+
+    def __init__(self, op_code, func, args):
+        """Instruction constructor."""
+        self.op_code = op_code
         self.func = func
         self.args = args
+
     def execute(self, machine_state):
+        """Execute the instruction."""
         return self.func(machine_state, *self.args)
+
     def __str__(self):
-        return ' '.join([self.op] + ['{}'.format(arg) for arg in self.args])
+        """Displayable string representing the instruction."""
+        return ' '.join([self.op_code] + ['{}'.format(arg) for arg in self.args])
 
 
 class CompilerState:
+    """Compilation position."""
     def __init__(self):
         self.block = None
         self.line_index = None
 
 
 class Compiler:
+    """Compiler class."""
 
     def __init__(self, num_registers, instruction_set, blocks):
+        """Construct the compiler with registers, an instruction set, and code blocks."""
         self.num_registers = num_registers
         self.instruction_set = instruction_set
         self.blocks = blocks
@@ -121,22 +163,23 @@ class Compiler:
         self.program = Program()
 
     def compile(self):
+        """Compile a program."""
         try:
             for self.state.block in self.blocks:
                 self._compile_current_block()
-        except CompileError as e:
-            print('COMPILE ERROR at %s.%d "%s": %s' % (
-                        self.state.block.label,
-                        self.state.line_index + 1,
-                        self.state.block.lines[self.state.line_index],
-                        str(e)))
+        except CompileError as exc:
+            print('COMPILE ERROR at %s.%d "%s": %s'
+                  % (self.state.block.label,
+                     self.state.line_index + 1,
+                     self.state.block.lines[self.state.line_index],
+                     str(exc)))
             return None
-        except CompilerInternalError as e:
-            print('COMPILER INTERNAL ERROR at %s.%d "%s": %s' % (
-                        self.state.block.label,
-                        self.state.line_index + 1,
-                        self.state.block.lines[self.state.line_index],
-                        str(e)))
+        except CompilerInternalError as exc:
+            print('COMPILER INTERNAL ERROR at %s.%d "%s": %s'
+                  % (self.state.block.label,
+                     self.state.line_index + 1,
+                     self.state.block.lines[self.state.line_index],
+                     str(exc)))
             return None
         return self.program
 
@@ -148,11 +191,11 @@ class Compiler:
 
     def _compile_line(self, line):
         fields = line.split()
-        op = fields[0].upper()
+        op_code = fields[0].upper()
         compile_args = fields[1:]
-        function = getattr(self.instruction_set, op, None)
+        function = getattr(self.instruction_set, op_code, None)
         if not function:
-            raise CompileError('Bad operation: %s' % op)
+            raise CompileError('Bad operation: %s' % op_code)
         signature_args = [key for key in inspect.signature(function).parameters]
         if not signature_args or signature_args[0] != 'machine_state':
             raise CompilerInternalError(
@@ -171,7 +214,7 @@ class Compiler:
             else:
                 value = compile_args[i]
             args.append(value)
-        instruction = Instruction(op, function, args)
+        instruction = Instruction(op_code, function, args)
         self.program.instructions.append(instruction)
         print(_instruction_trace_string(len(self.program.instructions), instruction))
 
@@ -184,7 +227,8 @@ class Compiler:
             raise CompileError('Bad register: #%d' % reg_num)
         return reg_num
 
-    def _get_increment(self, increment):
+    @classmethod
+    def _get_increment(cls, increment):
         if increment == '-1':
             return -1
         if increment == '+1':
@@ -200,9 +244,11 @@ class Compiler:
         raise CompileError('Unknown block label "%s"' % label)
 
 
-class MachineState:
+class MachineState:     #pylint: disable=too-many-instance-attributes
+    """Machine runtime state."""
 
     def __init__(self, program, inbox, num_registers):
+        """Initialize the machine runtime state."""
         self.program = program
         self.current_value = None
         self.inbox = copy.copy(inbox)
@@ -213,31 +259,37 @@ class MachineState:
         self.instruction_index_before = None
 
     def read_current(self):
+        """Read the current item."""
         if self.current_value is None:
             raise RunError('No current value')
         return self.current_value
 
     def read_current_int(self):
+        """Read the current item as an integer."""
         try:
             return int(self.read_current())
         except ValueError:
             raise RunError('Current value is not an integer')
 
     def write_current(self, value):
+        """Write the current item."""
         if value is None:
             raise RunError('Current value can not be set to empty')
         self.current_value = '{}'.format(value)
 
     def clear_current(self):
+        """Clear the current item."""
         self.current_value = None
 
     def read_register(self, reg_num):
+        """Read from a register."""
         value = self.registers[reg_num]
         if value is None:
             raise RunError('No value to read from register: #%d' % reg_num)
         return value
 
     def read_register_int(self, reg_num):
+        """Read from a register as an integer."""
         svalue = self.read_register(reg_num)
         try:
             return int(svalue)
@@ -245,40 +297,50 @@ class MachineState:
             raise RunError('Value is not an integer: %s' % svalue)
 
     def write_register(self, reg_num, value):
+        """Write to a register."""
         if value is None:
             raise RunError('No value to write to register: #%d' % reg_num)
         self.registers[reg_num] = '{}'.format(value)
 
     def read_inbox(self):
+        """Read from the inbox."""
         if not self.inbox:
             self.finish()
             raise InboxEmpty('Inbox is empty')
         return self.inbox.pop(0)
 
     def write_outbox(self, value):
+        """Write to the outbox."""
         self.outbox.append(value)
 
     def jump_to_location(self, location):
+        """Jump to a location."""
         if location <= 0 or location > len(self.program.instructions):
-            raise RunError('Bad jump location %d, expect 1-%d' % (location, len(self.program.instructions)))
+            raise RunError('Bad jump location %d, expect 1-%d'
+                           % (location, len(self.program.instructions)))
         self.instruction_index = location - 1
 
     def before_instruction(self):
+        """Instruction pre-processing."""
         self.instruction_index_before = self.instruction_index
 
     def after_instruction(self):
+        """Instruction post-processing."""
         # If it wasn't a jump move to the next instruction.
         if self.instruction_index == self.instruction_index_before:
             self.instruction_index += 1
         self.step_counter += 1
 
     def finish(self):
+        """Done when the inbox is drained."""
         self.instruction_index = len(self.program.instructions)
 
     def running(self):
+        """Return True if running."""
         return self.instruction_index < len(self.program.instructions)
 
     def trace_string(self):
+        """Return a trace string for display."""
         return 'c({})  r{}  i{}  o{}'.format(
             self.value_string(self.current_value),
             self.value_string(self.registers),
@@ -287,35 +349,43 @@ class MachineState:
 
     @classmethod
     def value_string(cls, value):
-        if type(value) is list or type(value) is tuple:
+        """Convert a value to a string."""
+        if isinstance(value, list, tuple):
             return '({})'.format(' '.join([cls.value_string(v) for v in value]))
         return '-' if value is None else '{}'.format(value)
 
     def current_instruction(self):
+        """Get the current instruction."""
         return self.program.instructions[self.instruction_index]
 
     def current_instruction_string(self):
+        """Get the current instruction as a trace string."""
         return _instruction_trace_string(self.instruction_index + 1, self.current_instruction())
 
     def get_summary(self):
-        class Summary:
+        """Return a summary object."""
+        class _Summary:
             def __init__(self, outbox, num_instructions, step_counter):
                 self.outbox = copy.copy(outbox)
                 self.num_instructions = num_instructions
                 self.step_counter = step_counter
-        return Summary(self.outbox, len(self.program.instructions), self.step_counter)
+        return _Summary(self.outbox, len(self.program.instructions), self.step_counter)
 
 
 class Machine:
+    """Runtime execution machine."""
 
-    def __init__(self, inbox, num_registers, instruction_set, program, trace=False):
+    def __init__(self, inbox, num_registers, instruction_set, program, trace=False):    #pylint: disable=too-many-arguments
+        """Construct execution machine."""
         self.instruction_set = instruction_set
         self.trace = trace
         self.state = MachineState(program, inbox, num_registers)
 
     def step(self):
         '''
-        Execute current instruction, return Summary object when done or None to continue.
+        Execute current instruction.
+
+        Return a Summary object when done or None to continue.
         '''
         try:
             if self.trace:
@@ -328,16 +398,20 @@ class Machine:
             pass
 
     def run(self):
+        """Run the program."""
         try:
             while self.state.running():
                 self.step()
             return self.state.get_summary()
-        except RunError as e:
-            print('RUN ERROR: %s: %s' % (str(e), self.state.current_instruction_string()))
+        except RunError as exc:
+            print('RUN ERROR: %s: %s' % (str(exc), self.state.current_instruction_string()))
 
 
 class Solution:
+    """A potential solution."""
+
     def __init__(self, name, inbox, outbox, blocks):
+        """Construct solution."""
         self.name = name
         self.inbox = inbox
         self.outbox = outbox
@@ -345,17 +419,21 @@ class Solution:
 
 
 class CodeBlock:
+    """A code block with a label and lines of code."""
+
     def __init__(self, label, lines):
+        """Code block constructor."""
         self.label = label
         self.lines = lines
 
 
 def box_string(box):
+    """Return a string for displaying the inbox or outbox."""
     return '(%s)' % (' '.join([str(item) for item in box]))
 
 
 def test_solution(solution, trace=False):
-
+    """Test to see if a solution works."""
     print('=== Solution: %s ===' % solution.name)
 
     print('Compiling...')
@@ -370,22 +448,23 @@ def test_solution(solution, trace=False):
 
     if summary:
         print('-- Summary:')
-        def summarize(label, value):
+        def _summarize(label, value):
             print('%12s: %s' % (label, value))
-        summarize('Instructions', summary.num_instructions)
-        summarize('Steps', summary.step_counter)
-        summarize('Outbox', box_string(summary.outbox))
+        _summarize('Instructions', summary.num_instructions)
+        _summarize('Steps', summary.step_counter)
+        _summarize('Outbox', box_string(summary.outbox))
         if summary.outbox == solution.outbox:
-            summarize('Result', 'PASSED')
+            _summarize('Result', 'PASSED')
             return True
-        summarize('Expected', box_string(solution.outbox))
-        summarize('Result', 'FAILED')
+        _summarize('Expected', box_string(solution.outbox))
+        _summarize('Result', 'FAILED')
         return False
 
 
 def test(path, names, trace):
-    with open(path) as f:
-        cfg = yaml.load(f)
+    """Test solution(s)."""
+    with open(path) as file_handle:
+        cfg = yaml.load(file_handle)
     if not names:
         names = sorted(cfg.keys())
     for name in names:
@@ -404,22 +483,27 @@ def test(path, names, trace):
                     blocks.append(CodeBlock(label, sol['code'][label]))
                 solution = Solution(name, inbox, outbox, blocks)
                 return test_solution(solution, trace=trace)
-            else:
-                print('Missing solution key%s: %s'
-                            % ('s' if len(missing) > 1 else '', ' '.join(missing)))
-                return False
-        else:
-            print('Solution not found: %s' % name)
+            print('Missing solution key%s: %s'
+                  % ('s' if len(missing) > 1 else '', ' '.join(missing)))
             return False
+        print('Solution not found: %s' % name)
+        return False
 
 
-if __name__ == '__main__':
-    parser = ArgumentParser(description='Compile and run Human Resource Machine programs.')
+def main():
+    """Main function."""
+    parser = ArgumentParser(
+        description='Compile and run Human Resource Machine programs.')
     parser.add_argument('-t', '--trace', dest='trace', action='store_true',
                         default=False, help='trace execution')
-    parser.add_argument(dest='targets', nargs='+', help='target path[:label1[:label2...]]')
+    parser.add_argument(dest='targets', nargs='+',
+                        help='target path[:label1[:label2...]]')
     args = parser.parse_args()
     for target in args.targets:
         components = target.strip().split(':')
         if components:
             test(components[0], components[1:], args.trace)
+
+
+if __name__ == '__main__':
+    main()

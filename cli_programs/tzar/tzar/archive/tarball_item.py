@@ -1,4 +1,4 @@
-# Copyright 2016 Steven Cooper
+# Copyright 2016-17 Steven Cooper
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,42 +12,49 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Multi-format tarball archive item."""
+
 import os
+
+#pylint: disable=import-error
+from scriptbase import console
+from scriptbase import disk
 
 from .base_item import BaseItem
 
+COMPRESSION_BY_EXTENSION = {
+    'tar.gz': 'gzip',
+    'tar.bz2': 'bzip2',
+    'tar.xz': 'xz',
+    'tar.lz': 'lzip',
+    'tgz': 'gzip',
+    'tbz2': 'bzip2',
+    'txz': 'xz',
+    'tlz': 'lzip',
+}
+
 class TarballItem(BaseItem):
+    """Multi-format tarball archive item."""
 
     @classmethod
     def item_for_path_if_matching(cls, path, parsed_name, config_data, **kwargs):
-        if parsed_name.extension_prefix:
-            if parsed_name.extension_prefix == 'tar':
-                if parsed_name.extension == 'bz2':
-                    return TarballItem(path, 'bzip2', config_data, **kwargs)
-                if parsed_name.extension == 'xz':
-                    return TarballItem(path, 'xz', config_data, **kwargs)
-                if parsed_name.extension == 'lz':
-                    return TarballItem(path, 'lzip', config_data, **kwargs)
-                if parsed_name.extension == 'gz':
-                    return TarballItem(path, 'gzip', config_data, **kwargs)
-        else:
-            if parsed_name.extension == 'tgz':
-                return TarballItem(path, 'gzip', config_data, **kwargs)
-            if parsed_name.extension == 'tbz2':
-                return TarballItem(path, 'bzip2', config_data, **kwargs)
-            if parsed_name.extension == 'txz':
-                return TarballItem(path, 'xz', config_data, **kwargs)
-            if parsed_name.extension == 'tlz':
-                return TarballItem(path, 'lzip', config_data, **kwargs)
+        """Create an appropriate archive item based on extension extension."""
+        full_extension = (
+            '.'.join([parsed_name.extension_prefix, ]) if parsed_name.extension_prefix
+            else parsed_name.extension)
+        if full_extension in COMPRESSION_BY_EXTENSION:
+            return TarballItem(path, COMPRESSION_BY_EXTENSION[full_extension],
+                               config_data, **kwargs)
 
     def __init__(self, path, compression, config_data, **kwargs):
+        """Construct archive item."""
         BaseItem.__init__(self, path, config_data, **kwargs)
-        self.compression = compression
-        if self.compression == 'bzip2':
+        self.options.compression = compression
+        if self.options.compression == 'bzip2':
             self.external_compression_program = self.config_data.REPLACEMENT_BZIP2
             self.tar_compression_options = 'j'
             self.tar_extension = '.tar.bz2'
-        elif self.compression == 'xz':
+        elif self.options.compression == 'xz':
             # xz has a threading
             if  'XZ_OPT' in os.environ:
                 os.environ['XZ_OPT'] = '%s --threads=0' % os.environ['XZ_OPT']
@@ -56,7 +63,7 @@ class TarballItem(BaseItem):
             self.tar_compression_options = 'J'
             self.external_compression_program = self.config_data.REPLACEMENT_XZ
             self.tar_extension = '.tar.xz'
-        elif self.compression == 'lzip':
+        elif self.options.compression == 'lzip':
             # does this work for lzip, like xz?
             if  'LZ_OPT' in os.environ:
                 os.environ['LZ_OPT'] = '%s --threads=0' % os.environ['LZ_OPT']
@@ -83,6 +90,7 @@ class TarballItem(BaseItem):
         self.tar_compare_options = '-%s%s%s' % ('d', self.tar_compression_options, 'f')
 
     def build_create_batch(self, batch):
+        """Populate a command batch for creating the archive."""
         output_path = ''.join([self.archive, self.tar_extension])
         if batch.is_metered():
             batch.add_command('echo', ('Creating: ', output_path))
@@ -97,13 +105,16 @@ class TarballItem(BaseItem):
         batch.add_error_deletion_path(output_path)
 
     def build_restore_batch(self, batch):
-        restore_to_dir = disk.get_versioned_path(os.path.basename(self.path)[:-len(self.tar_extension)])
+        """Populate a command batch for restoring the archive."""
+        restore_to_dir = disk.get_versioned_path(
+            os.path.basename(self.path)[:-len(self.tar_extension)])
         os.mkdir(restore_to_dir)
         console.info('Restoring to: %s' % restore_to_dir)
-        #TODO: Untested
+        #TO-DO: Untested
         batch.add_command('tar', self.tar_restore_options, self.path,
                           '--strip-components', '1', '-C', restore_to_dir)
 
     def build_compare_batch(self, batch):
-        #TODO: Untested - runs against working directory?
+        """Populate a command batch for comparing against the archive."""
+        #TO-DO: Untested - runs against working directory?
         batch.add_command('tar', self.tar_compare_options, self.path)

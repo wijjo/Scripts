@@ -1,47 +1,71 @@
 #!/usr/bin/env python
-################################################################################
-# Follow and colorize command output
-################################################################################
+# Copyright 2016-17 Steven Cooper
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Follow and colorize command output."""
 
 import sys
 import os
 import re
 import subprocess
-import shutil
 try:
     import json
 except ImportError:
     json = None
 
-#==============================================================================
 
-BLACK   = 0
-RED     = 1
-GREEN   = 2
-YELLOW  = 3
-BLUE    = 4
+BLACK = 0
+RED = 1
+GREEN = 2
+YELLOW = 3
+BLUE = 4
 MAGENTA = 5
-CYAN    = 6
-WHITE   = 7
+CYAN = 6
+WHITE = 7
+
 
 class Style(object):
-    def __init__(self, name, fg = None, bg = None, bold = False, hide = False, marker = None):
-        self.name   = name
-        self.fg     = fg
-        self.bg     = bg
-        self.bold   = bold
-        self.hide   = hide
+    """Style attributes."""
+
+    def __init__(self, name, fgcolor=None, bgcolor=None, bold=False, hide=False, marker=None):  #pylint: disable=too-many-arguments
+        """Style attributes constructor."""
+        self.name = name
+        self.fgcolor = fgcolor
+        self.bgcolor = bgcolor
+        self.bold = bold
+        self.hide = hide
         self.marker = marker
 
+
 class Scanner(object):
+    """Matcher for a pattern that triggers a style."""
+
     def __init__(self, pattern, style):
+        """Scanner constructor."""
         self.matcher = re.compile(pattern)
-        self.style   = style
-        self.index   = None
+        self.style = style
+        self.index = None
+
 
 class Colorizer(object):
-    def __init__(self, names = [], *scanners):
-        if type(names) not in (list, tuple):
+    """A set of scanners to colorize output."""
+
+    def __init__(self, names=None, *scanners):
+        """Colorizer constructor."""
+        if names is None:
+            self.names = []
+        elif not isinstance(names, list, tuple):
             self.names = (names,)
         else:
             self.names = names
@@ -51,28 +75,29 @@ class Colorizer(object):
             index += 1
             scanner.index = index
 
-class Global:
 
-    # Default styles that are written to the user configuration.
+class Global:
+    """Default styles that are written to the user configuration."""
+
     default_styles = dict(
-        DEFAULT = Style('Default', fg = WHITE),
-        ADMIN   = Style('Admin', fg = WHITE, bg = BLUE, bold = True),
-        DEBUG   = Style('Debug', fg = BLUE),
-        INFO    = Style('Info', fg = GREEN, bold = True),
-        ERROR   = Style('Error', fg = RED, bold = True, marker = 'ERROR'),
-        GOOD    = Style('Good', fg = MAGENTA, bold = True),
-        BAD     = Style('Bad', fg = RED, bold = True),
-        WARNING = Style('Warning', fg = YELLOW, bold = True),
-        SECTION = Style('Section', fg = MAGENTA, bold = True),
-        HEADING = Style('Heading', fg = CYAN, bold = True),
-        SUCCESS = Style('Success', fg = GREEN, bg = YELLOW, bold = True, marker = 'FAILURE'),
-        FAILURE = Style('Failure', fg = RED, bg = YELLOW, bold = True),
-        HIDE    = Style('Hide', hide = True)
+        DEFAULT=Style('Default', fgcolor=WHITE),
+        ADMIN=Style('Admin', fgcolor=WHITE, bgcolor=BLUE, bold=True),
+        DEBUG=Style('Debug', fgcolor=BLUE),
+        INFO=Style('Info', fgcolor=GREEN, bold=True),
+        ERROR=Style('Error', fgcolor=RED, bold=True, marker='ERROR'),
+        GOOD=Style('Good', fgcolor=MAGENTA, bold=True),
+        BAD=Style('Bad', fgcolor=RED, bold=True),
+        WARNING=Style('Warning', fgcolor=YELLOW, bold=True),
+        SECTION=Style('Section', fgcolor=MAGENTA, bold=True),
+        HEADING=Style('Heading', fgcolor=CYAN, bold=True),
+        SUCCESS=Style('Success', fgcolor=GREEN, bgcolor=YELLOW, bold=True, marker='FAILURE'),
+        FAILURE=Style('Failure', fgcolor=RED, bgcolor=YELLOW, bold=True),
+        HIDE=Style('Hide', hide=True)
     )
 
     # This gets read from the user configuration
     colorizers = []
-    styles     = {}
+    styles = {}
 
     # Filled in when we know
     script_name = os.path.basename(sys.argv[0])
@@ -83,8 +108,9 @@ class Global:
     sys.path.insert(0, lib_dir)
     from lib.follow.defaultrc import default_rc_text
 
-def _message(f, tag, *msgs):
-    '''Low level message display.'''
+
+def _message(stream, tag, *msgs):
+    """Low level message display."""
     if tag:
         stag = '%8s: ' % tag
     else:
@@ -93,28 +119,34 @@ def _message(f, tag, *msgs):
         if msg is not None:
             # Handle exceptions
             if issubclass(msg.__class__, Exception):
-                f.write('%s%s Exception: %s\n' % (stag, msg.__class__.__name__, str(msg)))
+                stream.write('%s%s Exception: %s\n' % (stag, msg.__class__.__name__, str(msg)))
             else:
                 # Handle multi-line strings
                 try:
-                    t = msg + ' '   # Throws exception if not string
+                    test_string = msg + ' '   #pylint: disable=unused-variable
                     for msg2 in msg.split('\n'):
-                        f.write('%s%s\n' % (stag, msg2))
+                        stream.write('%s%s\n' % (stag, msg2))
                 except TypeError:
                     if hasattr(msg, '__iter__'):
                         for msg2 in msg:
-                            f.write('%s   %s\n' % (stag, msg2))
+                            stream.write('%s   %s\n' % (stag, msg2))
                     else:
-                        f.write('%s%s\n' % (stag, str(msg)))
+                        stream.write('%s%s\n' % (stag, str(msg)))
+
 
 def warning(*msgs):
+    """Display warning(s)."""
     _message(sys.stdout, 'WARNING', *msgs)
 
+
 def abort(*msgs):
+    """Display fatal message(s) and exit."""
     _message(sys.stdout, 'FATAL', *msgs)
     sys.exit(1)
 
+
 def get_colorizer(program):
+    """Return a colorizer based on the program name."""
     if program:
         name = os.path.basename(program)
         for colorizer in Global.colorizers:
@@ -122,128 +154,152 @@ def get_colorizer(program):
                 return colorizer
     return None
 
+
 class CommandReader(object):
-    def __init__(self, *args):
-        self.args = args
-        if len(args) > 1 and not args[1].startswith('-'):
-            self.name = '_'.join(args[:2])
+    """Run command and process the output."""
+
+    def __init__(self, *command_args):
+        """Command reader constructor."""
+        self.args = command_args
+        if len(command_args) > 1 and not command_args[1].startswith('-'):
+            self.name = '_'.join(command_args[:2])
         else:
-            self.name = args[0]
+            self.name = command_args[0]
     def __iter__(self):
         try:
-            proc = subprocess.Popen(self.args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1)
+            proc = subprocess.Popen(self.args,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT,
+                                    bufsize=1)
             for line in iter(proc.stdout.readline, ''):
                 yield line.rstrip()
             proc.stdout.close()
-            rc = proc.wait()
-            if rc != 0:
-                warning('Command returned error %d' % rc)
-        except Exception, e:
-            warning('Exception running command: %s' % ' '.join(self.args), e)
+            return_code = proc.wait()
+            if return_code != 0:
+                warning('Command returned error %d' % return_code)
+        except Exception as exc:        #pylint: disable=broad-except
+            warning('Exception running command: %s' % ' '.join(self.args), exc)
+
 
 class Tailer(object):
+    """Tail a command through a reader and using a colorizer."""
 
     def __init__(self, options, reader, colorizer):
-        self.options   = options
-        self.reader    = reader
+        """Tailer constructor."""
+        self.options = options
+        self.reader = reader
         self.colorizer = colorizer
-        self.ftee      = None
+        self.ftee = None
         if not self.options.no_tee:
             path = os.path.join(Global.output_directory,
                                 '%s.out' % os.path.basename(self.reader.name))
             try:
                 self.ftee = open(path, 'w')
-            except Exception, e:
-                warning('Failed to open tee file "%s"' % path, e)
+            except Exception as exc:    #pylint: disable=broad-except
+                warning('Failed to open tee file "%s"' % path, exc)
 
     def close(self):
+        """Close the tailer."""
         if self.ftee:
             self.ftee.close()
 
     def tail(self):
-        for s in self.reader:
+        """Tail the reader."""
+        for line in self.reader:
             for scanner in self.colorizer.scanners:
-                if options.debug:
-                    print '???', scanner.index, scanner.matcher.pattern, scanner.matcher.search(s)
-                if scanner.matcher.search(s):
-                    if options.verbose:
-                        print('<match index=%d pattern="%s">'
-                                    % (scanner.index, scanner.matcher.pattern))
-                    if scanner.style in Global.styles:
-                        style = Global.styles[scanner.style]
-                    else:
-                        warning('Style "%s" not found.' % scanner.style)
-                        continue
-                    if not style.hide:
-                        ansi_line(sys.stdout, style, s)
-                        if self.ftee:
-                            if style.marker:
-                                self.ftee.write('%s: ' % style.marker)
-                            self.ftee.write('%s\n' % s)
-                            self.ftee.flush()
-                    break
+                if self.options.debug:
+                    print('???', scanner.index, scanner.matcher.pattern,
+                          scanner.matcher.search(line))
+                if scanner.matcher.search(line):
+                    if self._handle_match(scanner, line):
+                        break
             else:
-                sys.stdout.write('%s\n' % s)
+                sys.stdout.write('%s\n' % line)
                 if self.ftee:
-                    self.ftee.write('%s\n' % s)
+                    self.ftee.write('%s\n' % line)
                     self.ftee.flush()
 
-def ansi_line(f, style, s):
-    a = []
-    if style.fg:
-        a.append('3%d' % style.fg)
-        if style.bg is None:
-            a.append('49')
-    if style.bg:
-        a.append('4%d' % style.bg)
+    def _handle_match(self, scanner, line):
+        if self.options.verbose:
+            print('<match index=%d pattern="%s">'
+                  % (scanner.index, scanner.matcher.pattern))
+        if scanner.style in Global.styles:
+            style = Global.styles[scanner.style]
+        else:
+            warning('Style "%s" not found.' % scanner.style)
+            return False
+        if not style.hide:
+            ansi_line(sys.stdout, style, line)
+            if self.ftee:
+                if style.marker:
+                    self.ftee.write('%s: ' % style.marker)
+                self.ftee.write('%s\n' % line)
+                self.ftee.flush()
+        return True
+
+
+def ansi_line(stream, style, line):
+    """Display a colorized line."""
+    style_parts = []
+    if style.fgcolor:
+        style_parts.append('3%d' % style.fgcolor)
+        if style.bgcolor is None:
+            style_parts.append('49')
+    if style.bgcolor:
+        style_parts.append('4%d' % style.bgcolor)
     if style.bold:
-        a.append('1')
-    f.write('\x1b[%sm' % ';'.join(a))
-    f.write(s)
-    if a:
-        f.write('\x1b[K\x1b[m')
-    f.write('\n')
-    f.flush()
+        style_parts.append('1')
+    stream.write('\x1b[%sm' % ';'.join(style_parts))
+    stream.write(line)
+    if style_parts:
+        stream.write('\x1b[K\x1b[m')
+    stream.write('\n')
+    stream.flush()
+
 
 def write_config_as_needed(rcgen):
+    """Write configuration file as needed."""
     if rcgen or not os.path.exists(Global.config_path):
         if rcgen:
-            print 'Generating configuration file "%s"...' % Global.config_path
+            print('Generating configuration file "%s"...' % Global.config_path)
         else:
-            print 'Saving initial configuration file "%s"...' % Global.config_path
-            with open(Global.config_path, 'w') as f:
-                f.write(Global.default_rc_text)
-                f.write('\n')
+            print('Saving initial configuration file "%s"...' % Global.config_path)
+            with open(Global.config_path, 'w') as stream:
+                stream.write(Global.default_rc_text)
+                stream.write('\n')
+
 
 def read_config(styles, colorizers):
+    """Read configuration file."""
     if json:
         try:
-            f = open(Global.config_path)
-        except (IOError, OSError), e:
-            abort('Failed to open configuration "%s" for reading.' % Global.config_path, e)
+            stream = open(Global.config_path)
+        except (IOError, OSError) as exc:
+            abort('Failed to open configuration "%s" for reading.' % Global.config_path, exc)
         try:
             try:
-                s = f.read()
-                doc = json.loads(s)
-            except (IOError, OSError), e:
-                abort('Failed to read configuration "%s".' % Global.config_path, e)
+                text = stream.read()
+                doc = json.loads(text)
+            except (IOError, OSError) as exc:
+                abort('Failed to read configuration "%s".' % Global.config_path, exc)
         finally:
-            f.close()
+            stream.close()
     else:
         # Older Python versions don't have json. Use the default configuration.
         # Patch up the default configuration to use with Python eval.
         # Obviously these straight substitutions are simplistic and error-prone.
         config = Global.default_rc_text
-        for (s1, s2) in (('true', 'True'), ('false', 'False'), ('null', 'None')):
-            config = config.replace(s1, s2)
-        doc = eval(config)
+        for (str1, str2) in (('true', 'True'), ('false', 'False'), ('null', 'None')):
+            config = config.replace(str1, str2)
+        doc = eval(config)  #pylint: disable=eval-used
     for name in doc['styles']:
         jstyle = doc['styles'][name]
-        styles[name] = Style(jstyle['name'], fg     = jstyle['fg'],
-                                             bg     = jstyle['bg'],
-                                             bold   = jstyle['bold'],
-                                             hide   = jstyle['hide'],
-                                             marker = jstyle['marker'])
+        styles[name] = Style(jstyle['name'],
+                             fgcolor=jstyle['fgcolor'],
+                             bgcolor=jstyle['bgcolor'],
+                             bold=jstyle['bold'],
+                             hide=jstyle['hide'],
+                             marker=jstyle['marker'])
     for jcolorizer in doc['colorizers']:
         names = jcolorizer['names']
         scanners = []
@@ -251,24 +307,25 @@ def read_config(styles, colorizers):
             scanners.append(Scanner(jscanner['pattern'], jscanner['style']))
         colorizers.append(Colorizer(names, *scanners))
 
+
 def configure(options):
     '''Initialize the user configuration file as needed from which the
     colorizers get loaded.'''
     write_config_as_needed(options.rcgen)
     read_config(Global.styles, Global.colorizers)
     # Create the output directory as needed
-    # TODO error handling
+    # TO-DO: error handling
     if not options.no_tee and not os.path.exists(Global.output_directory):
-        print 'Creating output directory: %s' % Global.output_directory
+        print('Creating output directory: %s' % Global.output_directory)
         os.mkdir(Global.output_directory)
 
-#=========== Main ==============================================================
 
-if __name__ == '__main__':
-    from optparse import OptionParser
-    option_parser = OptionParser(description = '\n'.join([
-                                 "Follow, colorize, and capture a command's output.",
-                                 'Writes output to "%s" directory.' % Global.output_directory]))
+def main():
+    """Main function."""
+    from optparse import OptionParser                       #pylint: disable=deprecated-module
+    option_parser = OptionParser(description='\n'.join([    #pylint: disable=invalid-name
+        "Follow, colorize, and capture a command's output.",
+        'Writes output to "%s" directory.' % Global.output_directory]))
     option_parser.add_option('-c', '--colorizer', type='string', dest='colorizer',
                              help='specify colorizer name')
     option_parser.add_option('-f', '--file', action='store_true', dest='file',
@@ -288,16 +345,17 @@ if __name__ == '__main__':
     try:
         if options.test:
             import lib.follow.test
-            for test in lib.follow.test.test_data:
+            test_data = lib.follow.test.TEST_DATA
+            for test in test_data:
                 if test.name == options.test:
+                    reader = lib.follow.test.TestReader(test.name, test.text)
+                    options.colorizer = test.colorizer
                     break
             else:
                 abort('Could not find test "%s"' % options.test,
                       'Known tests: %s' % ' '.join([t.name for t in test_data]))
-            reader = lib.follow.test.TestReader(test.name, test.text)
-            options.colorizer = test.colorizer
         else:
-            if len(args) > 0:
+            if args:
                 reader = CommandReader(*args)
             else:
                 option_parser.print_help()
@@ -317,3 +375,9 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         warning('Interrupted')
 
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        warning('Interrupted')

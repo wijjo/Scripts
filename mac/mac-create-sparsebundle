@@ -1,4 +1,19 @@
 #!/usr/bin/env python
+# Copyright 2016-17 Steven Cooper
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Utility to simplify creating a sparse bundle, with additional options."""
 
 import sys
 import os
@@ -7,9 +22,11 @@ from subprocess import Popen, PIPE
 
 SCRIPT = os.path.basename(sys.argv[0])
 
+
 def usage():
-    print '''
-Usage %(SCRIPT)s NAME SIZE BANDSIZE [ENCRYPTION]
+    """Display usage message."""
+    print('''
+Usage {script} NAME SIZE BANDSIZE [ENCRYPTION]
 
     NAME        volume name
     SIZE        hdiutil-compatible size, e.g. 100g
@@ -18,18 +35,28 @@ Usage %(SCRIPT)s NAME SIZE BANDSIZE [ENCRYPTION]
 
     Prompts for a password if encryption is specified. Use 128 MB band size to
     improve Airport Extreme Time Capsule network throughput with small files.
-''' % globals()
+'''.format(script=SCRIPT))
     sys.exit(255)
 
+
 def get_password():
+    """Prompt for and return password from user."""
     while True:
         pw1 = getpass('Password: ')
         pw2 = getpass('   Again: ')
         if pw2 == pw1:
             return pw1
-        print 'Passwords do not match.'
+        print('Passwords do not match.')
 
-def main(name_arg, size_arg, band_size_arg, ebits_arg=None):
+
+def main():
+    """Main function."""
+    if len(sys.argv) < 3:
+        usage()
+    name_arg = sys.argv[1]
+    size_arg = sys.argv[2]
+    band_size_arg = sys.argv[3]
+    ebits_arg = sys.argv[4] if len(sys.argv) > 3 else None
     ebits = None
     if ebits_arg:
         try:
@@ -60,10 +87,9 @@ def main(name_arg, size_arg, band_size_arg, ebits_arg=None):
     else:
         password = None
     cmd_args.append('%s.sparsebundle' % name_arg)
-    p = Popen(cmd_args, **kwargs)
-    p.communicate(password)
+    proc = Popen(cmd_args, **kwargs)
+    proc.communicate(password)
+
 
 if __name__ == '__main__':
-    if len(sys.argv) < 3:
-        usage()
-    main(*sys.argv[1:5])
+    main()

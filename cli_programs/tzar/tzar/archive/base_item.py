@@ -1,4 +1,4 @@
-# Copyright 2016 Steven Cooper
+# Copyright 2016-17 Steven Cooper
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Base class for archive items."""
+
 import os
 import time
 
+#pylint: disable=import-error
 from scriptbase import console
 from scriptbase.cli import Boolean, String
+from scriptbase.utility import DictObject
 
 from ..batch import TzarBatch
 
@@ -35,79 +39,94 @@ ARCHIVE_CLI_ARGUMENTS = [
     String('path', 'path(s) to archive', nargs='+'),
 ]
 
+OPTIONS = dict(
+    dryrun=False,
+    pause=False,
+    verbose=False,
+    delete=False,
+    excludes=[],
+    ignoreobj=False,
+    ignorevcs=False,
+    noprogress=False,
+    outputdir=None,
+    compression=None,
+)
 
-def args_to_kwargs(command_args):
-    return dict(
-        dryrun=command_args.dryrun,
-        pause=command_args.pause,
-        verbose=command_args.verbose,
-        delete=command_args.delete,
-        ignoreobj=command_args.ignoreobj,
-        ignorevcs=command_args.ignorevcs,
-        noprogress=command_args.noprogress,
-        outputdir=command_args.outputdir
-    )
+
+def option_attributes_to_dictionary(option_attributes):
+    """Convert options as attributes to a dictionary."""
+    option_dictionary = {}
+    for keyword in OPTIONS:
+        option_dictionary[keyword] = getattr(option_attributes, keyword)
+    return option_dictionary
+
+
+def option_dictionary_to_attributes(option_dictionary):
+    """Convert options as a dictionary to attributes."""
+    option_attributes = DictObject()
+    bad_keywords = sorted(list(set(option_dictionary.keys()).difference(OPTIONS.keys())))
+    if bad_keywords:
+        plural = 's' if len(bad_keywords) > 1 else ''
+        console.abort('Unexpected option keyword%s: %s' % (plural, ' '.join(bad_keywords)))
+    for keyword in option_dictionary:
+        if keyword in OPTIONS:
+            setattr(option_attributes, keyword, option_dictionary.get(keyword))
+        else:
+            bad_keywords.append(keyword)
+    return option_attributes
 
 
 class BaseItem(object):
+    """Base class for archive items."""
 
-    def __init__(self, path, config_data,
-                 dryrun=False,
-                 pause=False,
-                 verbose=False,
-                 delete=False,
-                 excludes=[],
-                 ignoreobj=False,
-                 ignorevcs=False,
-                 noprogress=False,
-                 outputdir=None):
-        self.path        = os.path.normpath(path)
+    def __init__(self, path, config_data, **option_dictionary):
+        """Base archive item constructor."""
+        self.path = os.path.normpath(path)
         self.config_data = config_data
-        self.dryrun      = dryrun
-        self.pause       = pause
-        self.verbose     = verbose
-        self.delete      = delete
-        self.excludes    = excludes
-        self.ignoreobj   = ignoreobj
-        self.ignorevcs   = ignorevcs
-        self.outputdir   = outputdir if outputdir else self.config_data.OUTPUT_DIRECTORY
-        self.timestamp   = time.strftime('%y%m%d-%H%M%S')
-        self.name        = '%s-%s' % (self.path.replace('/', '_'), self.timestamp)
-        self.archive     = os.path.join(self.outputdir, self.name)
-        self.compression = None
-        self.noprogress  = noprogress
-        self.batch       = TzarBatch(self, self.config_data.BINARY_PATTERNS,
-                                     self.config_data.VCS_DIRECTORIES)
+        self.options = option_dictionary_to_attributes(option_dictionary)
+        if not self.options.outputdir:
+            self.options.outputdir = self.config_data.OUTPUT_DIRECTORY
         if self.config_data.EXCLUDE_BINARIES:
-            self.ignoreobj = True
+            self.options.ignoreobj = True
         if self.config_data.EXCLUDE_VCS:
-            self.ignorevcs = True
-        self.excludes.extend(self.config_data.EXCLUDE_OTHER_PATTERNS)
+            self.options.ignorevcs = True
+        self.options.excludes.extend(self.config_data.EXCLUDE_OTHER_PATTERNS)
+        name = '%s-%s' % (self.path.replace('/', '_'), time.strftime('%y%m%d-%H%M%S'))
+        self.archive = os.path.join(self.options.outputdir, name)
+        self.batch = TzarBatch(self,
+                               self.config_data.BINARY_PATTERNS,
+                               self.config_data.VCS_DIRECTORIES)
 
     def check_output_directory(self):
-        if not os.path.isdir(self.outputdir):
-            if os.path.exists(self.outputdir):
-                console.abort('Output directory exists and is not a directory: %s' % self.outputdir)
-            console.info('Creating output directory: %s' % self.outputdir)
+        """Make sure there's a good output directory."""
+        if not os.path.isdir(self.options.outputdir):
+            if os.path.exists(self.options.outputdir):
+                console.abort('Output directory exists and is not a directory: %s'
+                              % self.options.outputdir)
+            console.info('Creating output directory: %s' % self.options.outputdir)
             try:
-                os.mkdir(self.outputdir)
-            except (IOError, OSError) as e:
-                console.abort('Unable to create output directory', self.outputdir, e)
+                os.mkdir(self.options.outputdir)
+            except (IOError, OSError) as exc:
+                console.abort('Unable to create output directory', self.options.outputdir, exc)
 
     def compare(self, runner):
+        """Invoke the compare function."""
         return self._perform(runner, 'compare')
 
     def create(self, runner):
+        """Invoke the create function."""
         return self._perform(runner, 'create')
 
     def restore(self, runner):
+        """Invoke the restore function."""
         return self._perform(runner, 'restore')
 
     def is_metered(self):
+        """Return true if progress is metered."""
         return self.batch.is_metered()
 
     def _perform(self, runner, name):
-        self.outputdir = runner.expand(self.outputdir)
+        self.options.outputdir = runner.expand(self.options.outputdir)
         self.archive = runner.expand(self.archive)
         self.check_output_directory()
         perform_method = getattr(self, 'build_%s_batch' % name)
