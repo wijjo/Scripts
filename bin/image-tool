@@ -29,13 +29,13 @@ RE_IDENTIFY = re.compile(r'(\w+)\s+(\d+)x(\d+)\s+(\d+)x(\d+)[+](\d+)[+](\d+)\s+.
 class Chopper(object):
     """Image chopper."""
 
-    def __init__(self, xgrid, ygrid, xoffset, yoffset, dryrun): #pylint: disable=too-many-arguments
+    def __init__(self, xgrid, ygrid, xoffset, yoffset, dry_run):  # pylint: disable=too-many-arguments
         """Chopper constructor."""
         self.xgrid = xgrid
         self.ygrid = ygrid
         self.xoffset = xoffset
         self.yoffset = yoffset
-        self.dryrun = dryrun
+        self.dry_run = dry_run
 
     @classmethod
     def identify(cls, path):
@@ -73,7 +73,7 @@ class Chopper(object):
                 console.info(path_out)
                 cmd = 'convert {path} -crop {geometry} {path_out}'.format(
                     path=path, geometry=geometry, path_out=path_out)
-                if self.dryrun:
+                if self.dry_run:
                     print(cmd)
                 else:
                     if os.system(cmd) != 0:
@@ -82,29 +82,29 @@ class Chopper(object):
 @cli.Command(
     description='Chop up one or more images based on a grid specification.',
     args=[
-        cli.Integer('xgrid', 'number of X grid elements'),
-        cli.Integer('ygrid', 'number of Y grid elements'),
-        cli.String('input_image', 'image file path or wildcard pattern', nargs='+'),
-        cli.Integer('xoffset', 'X offset', '-x', '--x-offset', default=0),
-        cli.Integer('yoffset', 'Y offset', '-y', '--y-offset', default=0),
-        cli.String('output_base', 'custom base name for output files', '-o', '--output-base'),
+        cli.Integer('XGRID', 'number of X grid elements'),
+        cli.Integer('YGRID', 'number of Y grid elements'),
+        cli.String('INPUT_IMAGE', 'image file path or wildcard pattern', nargs='+'),
+        cli.Integer('XOFFSET', 'X offset', '-x', '--x-offset', default=0),
+        cli.Integer('YOFFSET', 'Y offset', '-y', '--y-offset', default=0),
+        cli.String('OUTPUT_BASE', 'custom base name for output files', '-o', '--output-base'),
     ],
 )
 def chop(runner):
     """Command to chop an image."""
-    chopper = Chopper(runner.arg.xgrid,
-                      runner.arg.ygrid,
-                      runner.arg.xoffset,
-                      runner.arg.yoffset,
-                      runner.arg.dryrun)
-    for arg in runner.arg.input_image:
+    chopper = Chopper(runner.arg.XGRID,
+                      runner.arg.YGRID,
+                      runner.arg.XOFFSET,
+                      runner.arg.YOFFSET,
+                      runner.arg.DRY_RUN)
+    for arg in runner.arg.INPUT_IMAGE:
         for path in glob.glob(os.path.expanduser(os.path.expandvars(arg))):
             if os.path.exists(path):
                 with command.Command('identify', arg) as cmd:
                     for line in cmd:
                         matched = RE_IDENTIFY.search(line)
                         if not matched is None:
-                            chopper.chop(path, base=runner.arg.output_base)
+                            chopper.chop(path, base=runner.arg.OUTPUT_BASE)
                         else:
                             console.error(line)
 
@@ -114,47 +114,47 @@ def chop(runner):
 Create iOS icon set from source image(s).
 Uses the input file base name as the output file base name.''',
     args=[
-        cli.String('input_image', 'image file path or wildcard pattern', nargs='+'),
-        cli.String('output_base', 'custom base name for output files', '-o', '--output-base'),
+        cli.String('INPUT_IMAGE', 'image file path or wildcard pattern', nargs='+'),
+        cli.String('OUTPUT_BASE', 'custom base name for output files', '-o', '--output-base'),
     ],
 )
 def ios_icons(runner):
     """Command to convert to iOS icons."""
-    for arg in runner.arg.input_image:
+    for arg in runner.arg.INPUT_IMAGE:
         for path in glob.glob(os.path.expanduser(os.path.expandvars(arg))):
             if os.path.exists(path):
-                if runner.arg.output_base is None:
+                if runner.arg.OUTPUT_BASE is None:
                     basename = os.path.splitext(os.path.basename(path))[0]
                 else:
-                    basename = runner.arg.output_base
-                resize_ios_icon(path, basename, 29, runner.args.dryrun,
+                    basename = runner.arg.OUTPUT_BASE
+                resize_ios_icon(path, basename, 29, runner.arg.DRY_RUN,
                                 'ipad-settings-1x')
-                resize_ios_icon(path, basename, 40, runner.args.dryrun,
+                resize_ios_icon(path, basename, 40, runner.arg.DRY_RUN,
                                 'ipad-spotlight-1x')
-                resize_ios_icon(path, basename, 58, runner.args.dryrun,
+                resize_ios_icon(path, basename, 58, runner.arg.DRY_RUN,
                                 'iphone-settings-2x', 'ipad-settings-2x')
-                resize_ios_icon(path, basename, 76, runner.args.dryrun,
+                resize_ios_icon(path, basename, 76, runner.arg.DRY_RUN,
                                 'ipad-app-1x')
-                resize_ios_icon(path, basename, 80, runner.args.dryrun,
+                resize_ios_icon(path, basename, 80, runner.arg.DRY_RUN,
                                 'iphone-spotlight-2x', 'ipad-spotlight-2x')
-                resize_ios_icon(path, basename, 87, runner.args.dryrun,
+                resize_ios_icon(path, basename, 87, runner.arg.DRY_RUN,
                                 'iphone-settings-3x')
-                resize_ios_icon(path, basename, 120, runner.args.dryrun,
+                resize_ios_icon(path, basename, 120, runner.arg.DRY_RUN,
                                 'iphone-spotlight-3x', 'iphone-app-2x')
-                resize_ios_icon(path, basename, 152, runner.args.dryrun,
+                resize_ios_icon(path, basename, 152, runner.arg.DRY_RUN,
                                 'ipad-app-2x')
-                resize_ios_icon(path, basename, 180, runner.args.dryrun,
-                                'runner.args.dryrun, iphone-app-3x')
+                resize_ios_icon(path, basename, 180, runner.arg.DRY_RUN,
+                                'iphone-app-3x')
 
 
-def resize_ios_icon(path, basename, pixels, dryrun, *copies):
+def resize_ios_icon(path, basename, pixels, dry_run, *copies):
     """Resize an iOS icon."""
     for copy in copies:
         output = '{basename}-{copy}.png'.format(basename=basename, copy=copy)
         resize_command = (
             'convert -resize {pixels}x{pixels} {path} {output}'.format(
                 pixels=pixels, path=path, output=output))
-        if dryrun:
+        if dry_run:
             print(resize_command)
         else:
             print(output)
@@ -164,11 +164,11 @@ def resize_ios_icon(path, basename, pixels, dryrun, *copies):
 @cli.Main(
     description='Assorted image file operations.',
     support_verbose=True,
-    support_dryrun=True,
+    support_dry_run=True,
 )
 def main(runner):
     """Main function."""
-    console.set_verbose(runner.arg.verbose)
+    console.set_verbose(runner.arg.VERBOSE)
 
 
 if __name__ == '__main__':

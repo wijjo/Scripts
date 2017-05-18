@@ -22,7 +22,8 @@ from tzar.archive.base_item import ARCHIVE_CLI_ARGUMENTS, option_attributes_to_d
 from tzar.archive.p7zip_item import P7ZipItem
 
 @Command(
-    name='7z',
+    name='p7zip',
+    aliases=['7z'],
     description='Archive with p7zip compression.',
     args=ARCHIVE_CLI_ARGUMENTS
 )

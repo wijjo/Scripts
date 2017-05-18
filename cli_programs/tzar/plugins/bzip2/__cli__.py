@@ -22,17 +22,14 @@ from tzar.archive.base_item import ARCHIVE_CLI_ARGUMENTS, option_attributes_to_d
 from tzar.archive.tarball_item import TarballItem
 
 @Command(
-    name='bz2',
+    name='bzip2',
+    aliases=['bz'],
     description='Archive with bzip2 compression.',
     args=ARCHIVE_CLI_ARGUMENTS
 )
 def _(runner):
+    option_dict = option_attributes_to_dictionary(runner.arg)
     for path_pat in runner.arg.path:
         for path in glob(path_pat):
-            item = TarballItem(
-                path,
-                "bzip2",
-                runner.cfg.data,
-                **option_attributes_to_dictionary(runner.arg)
-            )
+            item = TarballItem(path, 'bzip2', runner.cfg.data, **option_dict)
             item.create(runner)

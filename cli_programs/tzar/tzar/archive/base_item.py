@@ -40,7 +40,7 @@ ARCHIVE_CLI_ARGUMENTS = [
 ]
 
 OPTIONS = dict(
-    dryrun=False,
+    dry_run=False,
     pause=False,
     verbose=False,
     delete=False,
@@ -49,15 +49,18 @@ OPTIONS = dict(
     ignorevcs=False,
     noprogress=False,
     outputdir=None,
-    compression=None,
 )
 
 
-def option_attributes_to_dictionary(option_attributes):
+def option_attributes_to_dictionary(option_attributes, **additional_symbols):
     """Convert options as attributes to a dictionary."""
     option_dictionary = {}
-    for keyword in OPTIONS:
-        option_dictionary[keyword] = getattr(option_attributes, keyword)
+    for keyword, default_value in OPTIONS.items():
+        if hasattr(option_attributes, keyword):
+            option_dictionary[keyword] = getattr(option_attributes, keyword)
+        else:
+            option_dictionary[keyword] = default_value
+    option_dictionary.update(additional_symbols)
     return option_dictionary
 
 

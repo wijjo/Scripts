@@ -43,8 +43,8 @@ class TarballItem(BaseItem):
             '.'.join([parsed_name.extension_prefix, ]) if parsed_name.extension_prefix
             else parsed_name.extension)
         if full_extension in COMPRESSION_BY_EXTENSION:
-            return TarballItem(path, COMPRESSION_BY_EXTENSION[full_extension],
-                               config_data, **kwargs)
+            kwargs['compression'] = COMPRESSION_BY_EXTENSION[full_extension]
+            return TarballItem(path, config_data, **kwargs)
 
     def __init__(self, path, compression, config_data, **kwargs):
         """Construct archive item."""

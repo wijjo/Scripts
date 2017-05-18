@@ -112,7 +112,7 @@ CFG_SPECS = [
     ),
     ConfigSpec(
         'OUTPUT_DIRECTORY',
-        '{program_name}',
+        '.{program_name}',
         'Output subdirectory name.'
     ),
     ConfigSpec(
@@ -143,10 +143,10 @@ CFG_SPECS = [
 ]
 
 @Main(
-    description='Simple backup archiver.',
+    description='Tzar - your friendly multi-archiver front end.',
     configuration=CFG_SPECS,
     support_verbose=True,
-    support_dryrun=True,
+    support_dry_run=True,
     support_pause=True,
     support_discovery=True,
 )

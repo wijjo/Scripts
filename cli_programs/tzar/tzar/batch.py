@@ -34,7 +34,7 @@ class TzarBatch(command.Batch):
         self.item = item
         self.binary_patterns = binary_patterns
         self.vcs_directories = vcs_directories
-        command.Batch.__init__(self, dryrun=item.options.dryrun)
+        command.Batch.__init__(self, dry_run=item.options.DRY_RUN)
 
     def add_exclude_args(self, option):
         """Add exclusion arguments."""

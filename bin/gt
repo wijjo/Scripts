@@ -44,19 +44,19 @@ def project_root_context():
 @cli.Main(
     description='Assorted higher level commands for working in a Git environment.',
     support_verbose=True,
-    support_dryrun=True,
-    support_pause=True,
+    support_dry_run=True,
+    support_pause=False,
 )
 def _main(runner):
-    console.set_verbose(runner.arg.verbose)
+    console.set_verbose(runner.arg.VERBOSE)
 
 
 @cli.Command(
     aliases=['st'],
     description='Show pending changes and other status.',
     args=[
-        cli.Boolean('short', 'short report, i.e. just changed files', '-s', '--short'),
-        cli.Boolean('time', 'order by time instead of name', '-t', '--time'),
+        cli.Boolean('SHORT', 'short report, i.e. just changed files', '-s', '--short'),
+        cli.Boolean('TIME', 'order by time instead of name', '-t', '--time'),
     ],
 )
 def status(runner):
@@ -76,16 +76,16 @@ def status(runner):
                     local=git.get_local_branch(),
                     tracking=git.get_tracking_branch()
                 ))
-            if not submodule and not runner.arg.short:
+            if not submodule and not runner.arg.SHORT:
                 _header()
                 header_displayed = True
-            changes = git.get_changes_by_time() if runner.arg.time else git.get_changes()
+            changes = git.get_changes_by_time() if runner.arg.TIME else git.get_changes()
             for change in changes:
                 path = change.path2 if change.path2 else change.path
-                if not runner.arg.short and not header_displayed:
+                if not runner.arg.SHORT and not header_displayed:
                     _header()
                     header_displayed = True
-                if runner.arg.short:
+                if runner.arg.SHORT:
                     print(path)
                 else:
                     try:
@@ -102,8 +102,8 @@ def status(runner):
 @cli.Command(
     description='Archive uncommitted changes and capture a patch diff.',
     args=[
-        cli.Boolean('all', 'include unmanaged files in archive', '-a', '--all'),
-        cli.String('output', 'output directory', '-o', '--output', default='../WIP'),
+        cli.Boolean('ALL', 'include unmanaged files in archive', '-a', '--all'),
+        cli.String('OUTPUT', 'output directory', '-o', '--output', default='../WIP'),
     ],
 )
 def snapshot(runner):
@@ -112,7 +112,7 @@ def snapshot(runner):
     with project_root_context():
 
         output_dir = os.path.join(
-            runner.arg.output,
+            runner.arg.OUTPUT,
             '-'.join([
                 time.strftime('%y%m%d-%H%M%S'),
                 os.path.basename(os.getcwd()),
@@ -121,14 +121,14 @@ def snapshot(runner):
         )
         zip_path = os.path.realpath(os.path.join(
             output_dir,
-            'changed-and-new.zip' if runner.arg.all else 'changed.zip'
+            'changed-and-new.zip' if runner.arg.ALL else 'changed.zip'
         ))
         diff_path = os.path.realpath(os.path.join(output_dir, 'patch.diff'))
 
         console.info('Base directory (Git project root):', [os.getcwd()])
         console.info('Output directory:', [output_dir])
 
-        if not runner.arg.dryrun:
+        if not runner.arg.DRY_RUN:
             os.makedirs(output_dir)
 
         file_paths = []
@@ -139,25 +139,25 @@ def snapshot(runner):
             if change.flag.startswith('R'):
                 file_paths.append(change.path2)
             elif change.flag != 'D' and change.path != zip_path:
-                if runner.arg.all or change.flag != '??':
-                    if runner.arg.dryrun:
+                if runner.arg.ALL or change.flag != '??':
+                    if runner.arg.DRY_RUN:
                         sys.stdout.write('+%s%s' % (change.path, os.linesep))
                     file_paths.append(change.path)
 
         if not file_paths:
             console.info('Nothing to archive: %s' % os.path.basename(os.getcwd()))
 
-        if not runner.arg.dryrun and file_paths:
+        if not runner.arg.DRY_RUN and file_paths:
             zip_file = zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED)
             for path in file_paths:
-                if runner.arg.verbose:
+                if runner.arg.VERBOSE:
                     sys.stdout.write('+%s%s' % (path, os.linesep))
                 zip_file.write(path)
             zip_file.close()
 
         console.info('Patch diff: %s' % os.path.basename(diff_path))
 
-        if not runner.arg.dryrun:
+        if not runner.arg.DRY_RUN:
             with open(diff_path, 'w') as diff_file:
                 with command.Command('git', 'diff') as gitcmd:
                     for line in gitcmd:
@@ -168,26 +168,26 @@ def snapshot(runner):
 @cli.Command(
     description='Make a new branch.',
     args=[
-        cli.String('ancestor', 'ancestor branch name', '-a', default=None),
-        cli.String('branch', 'branch name'),
+        cli.String('ANCESTOR', 'ancestor branch name', '-a', default=None),
+        cli.String('BRANCH', 'branch name'),
     ],
 )
 def new(runner):
     """New command implementation."""
-    runner.var.folder = runner.arg.branch
+    runner.var.folder = runner.arg.BRANCH
     runner.shell('git fetch')
     runner.shell('git checkout master')
     runner.shell('git pull')
     git.create_branch(None,
-                      runner.arg.branch,
-                      runner.arg.ancestor,
+                      runner.arg.BRANCH,
+                      runner.arg.ANCESTOR,
                       create_remote=True,
-                      dryrun=runner.arg.dryrun,
-                      verbose=runner.arg.verbose)
+                      dry_run=runner.arg.DRY_RUN,
+                      verbose=runner.arg.VERBOSE)
 
 
 @cli.Command(
-    description='List my branches and unmerged commits.',
+    description='List branches and unmerged commits.',
 )
 def branches(runner):   #pylint: disable=unused-argument
     """Branches command implementation."""
@@ -201,22 +201,22 @@ def branches(runner):   #pylint: disable=unused-argument
 @cli.Command(
     description='Rename local and remote branch.',
     args=[
-        cli.String('remotename', 'remote branch name, if different from local', '-r'),
-        cli.String('branch', 'branch name'),
+        cli.String('REMOTENAME', 'remote branch name, if different from local', '-r'),
+        cli.String('BRANCH', 'branch name'),
     ],
 )
 def rename(runner):
     """Rename command implementation."""
-    git.rename_branch(runner.arg.branch,
+    git.rename_branch(runner.arg.BRANCH,
                       rename_remote=True,
-                      remote_name=runner.arg.remotename,
-                      dryrun=runner.arg.dryrun)
+                      remote_name=runner.arg.REMOTENAME,
+                      dry_run=runner.arg.DRY_RUN)
 
 
 @cli.Command(
     description='Use "hub" command to submit a pull request for review.',
     args=[
-        cli.String('title', 'pull request title'),
+        cli.String('TITLE', 'pull request title'),
     ],
 )
 def review(runner):
@@ -226,7 +226,7 @@ def review(runner):
     if not shell.find_executable('hub'):
         console.abort('The hub command must be installed. (http://defunkt.io/hub/)',
                       'OS X Homebrew command: brew install hub')
-    runner.shell('hub pull-request "%s" -b %s' % (runner.arg.title, branch))
+    runner.shell('hub pull-request "%s" -b %s' % (runner.arg.TITLE, branch))
 
 
 @cli.Command(

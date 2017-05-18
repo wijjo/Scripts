@@ -43,17 +43,19 @@ def mutt_send(address, subject, body, *attachments):
         raise Abort('Send command returned error code %d' % return_code)
 
 
-def smtp_send(
+def smtp_send(              #pylint: disable=too-many-arguments
         from_address,
         to_address,
         subject,
         body,
+        smtp_user,
+        smtp_password,
         *attachments):
     """Send email using SMTP."""
     msg = email.message.EmailMessage()
     msg['From'] = from_address
     msg['To'] = to_address
-    msg['Date'] = email.Utils.formatdate(localtime=True)
+    msg['Date'] = email.utils.formatdate(localtime=True)
     msg['Subject'] = subject
     msg.set_content(body)
     for attachment in attachments:
@@ -69,6 +71,8 @@ def smtp_send(
                                subtype=subtype,
                                filename=os.path.basename(attachment))
     with smtplib.SMTP('smtp.gmail.com', 587) as smtp_handle:
+        smtp_handle.starttls()
+        smtp_handle.login(smtp_user, smtp_password)
         smtp_handle.send_message(msg)
 
 
@@ -110,10 +114,20 @@ def main():
         ext = os.path.splitext(doc)[1]
         if ext.lower() in ('.mobi', '.azw'):
             print('Mailing "%s" to %s...' % (doc, config.to_addr))
-            smtp_send(config.from_addr, config.to_addr, doc, 'Attached "%s"' % doc, doc)
+            smtp_send(config.from_addr,
+                      config.to_addr, doc,
+                      'Attached "%s"' % doc,
+                      config.smtp_user,
+                      config.smtp_password,
+                      doc)
         else:
             print('Mailing and converting "%s" to %s...' % (doc, config.to_addr))
-            smtp_send(config.from_addr, config.to_addr, 'convert', 'Attached "%s"' % doc, doc)
+            smtp_send(config.from_addr,
+                      config.to_addr,
+                      'convert', 'Attached "%s"' % doc,
+                      config.smtp_user,
+                      config.smtp_password,
+                      doc)
 
 
 if __name__ == '__main__':

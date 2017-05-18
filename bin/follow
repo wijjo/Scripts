@@ -38,11 +38,11 @@ WHITE = 7
 class Style(object):
     """Style attributes."""
 
-    def __init__(self, name, fgcolor=None, bgcolor=None, bold=False, hide=False, marker=None):  #pylint: disable=too-many-arguments
+    def __init__(self, name, fg=None, bg=None, bold=False, hide=False, marker=None):    #pylint: disable=too-many-arguments
         """Style attributes constructor."""
         self.name = name
-        self.fgcolor = fgcolor
-        self.bgcolor = bgcolor
+        self.fg = fg    #pylint: disable=invalid-name
+        self.bg = bg    #pylint: disable=invalid-name
         self.bold = bold
         self.hide = hide
         self.marker = marker
@@ -65,7 +65,7 @@ class Colorizer(object):
         """Colorizer constructor."""
         if names is None:
             self.names = []
-        elif not isinstance(names, list, tuple):
+        elif not isinstance(names, (list, tuple)):
             self.names = (names,)
         else:
             self.names = names
@@ -80,18 +80,18 @@ class Global:
     """Default styles that are written to the user configuration."""
 
     default_styles = dict(
-        DEFAULT=Style('Default', fgcolor=WHITE),
-        ADMIN=Style('Admin', fgcolor=WHITE, bgcolor=BLUE, bold=True),
-        DEBUG=Style('Debug', fgcolor=BLUE),
-        INFO=Style('Info', fgcolor=GREEN, bold=True),
-        ERROR=Style('Error', fgcolor=RED, bold=True, marker='ERROR'),
-        GOOD=Style('Good', fgcolor=MAGENTA, bold=True),
-        BAD=Style('Bad', fgcolor=RED, bold=True),
-        WARNING=Style('Warning', fgcolor=YELLOW, bold=True),
-        SECTION=Style('Section', fgcolor=MAGENTA, bold=True),
-        HEADING=Style('Heading', fgcolor=CYAN, bold=True),
-        SUCCESS=Style('Success', fgcolor=GREEN, bgcolor=YELLOW, bold=True, marker='FAILURE'),
-        FAILURE=Style('Failure', fgcolor=RED, bgcolor=YELLOW, bold=True),
+        DEFAULT=Style('Default', fg=WHITE),
+        ADMIN=Style('Admin', fg=WHITE, bg=BLUE, bold=True),
+        DEBUG=Style('Debug', fg=BLUE),
+        INFO=Style('Info', fg=GREEN, bold=True),
+        ERROR=Style('Error', fg=RED, bold=True, marker='ERROR'),
+        GOOD=Style('Good', fg=MAGENTA, bold=True),
+        BAD=Style('Bad', fg=RED, bold=True),
+        WARNING=Style('Warning', fg=YELLOW, bold=True),
+        SECTION=Style('Section', fg=MAGENTA, bold=True),
+        HEADING=Style('Heading', fg=CYAN, bold=True),
+        SUCCESS=Style('Success', fg=GREEN, bg=YELLOW, bold=True, marker='FAILURE'),
+        FAILURE=Style('Failure', fg=RED, bg=YELLOW, bold=True),
         HIDE=Style('Hide', hide=True)
     )
 
@@ -206,6 +206,7 @@ class Tailer(object):
     def tail(self):
         """Tail the reader."""
         for line in self.reader:
+            line = line.decode('utf8')
             for scanner in self.colorizer.scanners:
                 if self.options.debug:
                     print('???', scanner.index, scanner.matcher.pattern,
@@ -241,12 +242,12 @@ class Tailer(object):
 def ansi_line(stream, style, line):
     """Display a colorized line."""
     style_parts = []
-    if style.fgcolor:
-        style_parts.append('3%d' % style.fgcolor)
-        if style.bgcolor is None:
+    if style.fg:
+        style_parts.append('3%d' % style.fg)
+        if style.bg is None:
             style_parts.append('49')
-    if style.bgcolor:
-        style_parts.append('4%d' % style.bgcolor)
+    if style.bg:
+        style_parts.append('4%d' % style.bg)
     if style.bold:
         style_parts.append('1')
     stream.write('\x1b[%sm' % ';'.join(style_parts))
@@ -295,8 +296,8 @@ def read_config(styles, colorizers):
     for name in doc['styles']:
         jstyle = doc['styles'][name]
         styles[name] = Style(jstyle['name'],
-                             fgcolor=jstyle['fgcolor'],
-                             bgcolor=jstyle['bgcolor'],
+                             fg=jstyle['fg'],
+                             bg=jstyle['bg'],
                              bold=jstyle['bold'],
                              hide=jstyle['hide'],
                              marker=jstyle['marker'])

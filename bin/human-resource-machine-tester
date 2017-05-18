@@ -350,7 +350,7 @@ class MachineState:     #pylint: disable=too-many-instance-attributes
     @classmethod
     def value_string(cls, value):
         """Convert a value to a string."""
-        if isinstance(value, list, tuple):
+        if isinstance(value, (list, tuple)):
             return '({})'.format(' '.join([cls.value_string(v) for v in value]))
         return '-' if value is None else '{}'.format(value)
 
