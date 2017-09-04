@@ -1,0 +1,57 @@
+#!/usr/bin/env python
+
+import sys
+import os
+from argparse import ArgumentParser
+
+OUTPUT_DIR = '~/.vscode-extensions-backup'
+LIST_NAME = 'extensions.list'
+SCRIPT_NAME = 'install-extensions.sh'
+
+def main(output_dir):
+    if not os.path.exists(output_dir):
+        try:
+            os.makedirs(output_dir)
+        except (IOError, OSError) as exc:
+            print('* {exc} *'.format(**locals()))
+            return 1
+    list_path = os.path.join(output_dir, LIST_NAME)
+    script_path = os.path.join(output_dir, SCRIPT_NAME)
+    if os.system('code --list-extensions > "{list_path}"'.format(**locals())) != 0:
+        print('* Unable to save extension list *')
+        return 1
+    try:
+        with open(list_path) as f_list:
+            with open(script_path, 'w') as f_script:
+                f_script.write('''\
+#!/usr/bin/env bash
+set -e
+set -x
+{lines}
+'''.format(lines=''.join([
+    'code --install-extension {ext}'.format(ext=ext)
+    for ext in f_list
+])))
+    except (IOError, OSError) as exc:
+        print('* {exc} *'.format(**locals()))
+        return 1
+    os.system('chmod +x "{script_path}"'.format(**locals()))
+    print('''
+  Saved the following files:
+
+    Extension list:
+      {list_path}
+
+    (Re-)Installation script:
+      {script_path}
+'''.format(**locals()))
+    return 0
+
+if __name__ == '__main__':
+    parser = ArgumentParser(
+            description='Save VSCode extension list and (re-)installation script.')
+    parser.add_argument('-o', '--output-dir', dest='OUTPUT_DIR',
+            default=OUTPUT_DIR,
+            help='output directory (default={output_dir})'.format(output_dir=OUTPUT_DIR))
+    args = parser.parse_args()
+    sys.exit(main(os.path.expanduser(os.path.expandvars(args.OUTPUT_DIR))))
