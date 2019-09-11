@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+
+"""External drive backup."""
+
+#pylint: disable=too-many-instance-attributes,too-few-public-methods,too-many-arguments,broad-except
+
+import sys
+import os
+import argparse
+import subprocess
+import time
+import plistlib
+import atexit
+
+INPUT_BUFFER_SIZE = 1024 * 1024
+REPORT_SIZE = INPUT_BUFFER_SIZE * 1024
+REPORT_UNIT = 'GiB'
+OUTPUT_NAME_FORMAT = '{name}-{timestamp}.img'
+TO_DELETE_AT_EXIT = []
+
+def abort(message):
+    """Display critical error and exit."""
+    print('CRITICAL: {}'.format(message))
+    sys.exit(1)
+
+def at_exit_cleanup():
+    """Delete partial files, etc.."""
+    for to_delete in TO_DELETE_AT_EXIT:
+        if os.path.exists(to_delete):
+            try:
+                print('Removing: {}'.format(to_delete))
+                os.remove(to_delete)
+            except Exception as exc:
+                print(str(exc))
+
+class Volume:
+    """Data for a disk volume."""
+    def __init__(self, disk_dev, volume_dev, filesystem, size, name, uuid, mountpoint):
+        self.disk_dev = disk_dev
+        self.raw_disk_dev = '/dev/r{}'.format(self.disk_dev)
+        self.volume_dev = volume_dev
+        self.filesystem = filesystem
+        self.size = int(size)
+        self.name = name
+        self.uuid = uuid
+        self.mountpoint = mountpoint
+
+def find_volume(identifier):
+    """
+    Look up volume(s) by identifier.
+
+    Identifier may be a volume name, mountpoint, UUID, or device name.
+    """
+    volumes = []
+    proc = subprocess.run(['diskutil', 'list', '-plist'], capture_output=True, check=True)
+    plist_data = plistlib.loads(proc.stdout)
+    all_disks_and_partitions = plist_data['AllDisksAndPartitions']
+    for disk_or_partition in all_disks_and_partitions:
+        for volume in disk_or_partition.get('Partitions', []):
+            if identifier in [
+                    volume.get('VolumeName', ''),
+                    volume.get('MountPoint', ''),
+                    volume.get('VolumeUUID', ''),
+                    volume.get('DeviceIdentifier', ''),
+            ]:
+                volumes.append(Volume(
+                    disk_or_partition['DeviceIdentifier'],
+                    volume['DeviceIdentifier'],
+                    volume['Content'],
+                    volume['Size'],
+                    volume['VolumeName'],
+                    volume['VolumeUUID'],
+                    volume.get('MountPoint'),
+                ))
+    return volumes
+
+def find_unique_volume(identifier):
+    """Find exactly one volume by identifier (see find_volume() function)."""
+    volumes = find_volume(identifier)
+    if not volumes:
+        abort('No volume for "{}" was found.'.format(identifier))
+    if len(volumes) != 1:
+        abort('There are {} volumes for "{}".'.format(len(volumes), identifier))
+    return volumes[0]
+
+def unmount_volume(mountpoint):
+    """Unmount a volume based on a mountpoint."""
+    print('Unmounting: {}'.format(mountpoint))
+    subprocess.run(['diskutil', 'unmount', mountpoint], check=True)
+
+def get_volume_output_path(volume_name, output_dir):
+    """Generate an output path for a volume backup file."""
+    return os.path.join(output_dir, OUTPUT_NAME_FORMAT.format(
+        name=volume_name,
+        timestamp=time.strftime('%Y-%m-%d-%H%M%S')))
+
+def make_image(input_device, output_path):
+    """Back up input device."""
+    print('Input device: {}'.format(input_device))
+    print(' Output path: {}'.format(output_path))
+    print('-----')
+    bytes_read = 0
+    time_start = time.time()
+    TO_DELETE_AT_EXIT.append(output_path)
+    with open(input_device, mode='rb', buffering=0) as input_handle:
+        with open(output_path, mode='wb') as output_handle:
+            data = input_handle.read(INPUT_BUFFER_SIZE)
+            while data:
+                output_handle.write(data)
+                bytes_read += len(data)
+                if bytes_read % REPORT_SIZE == 0 or bytes_read < INPUT_BUFFER_SIZE:
+                    elapsed_seconds = round(time.time() - time_start)
+                    print('{:02d}:{:02d} {:0.2f} {}'.format(
+                        elapsed_seconds // 60,
+                        elapsed_seconds % 60,
+                        bytes_read / REPORT_SIZE,
+                        REPORT_UNIT))
+                data = input_handle.read(INPUT_BUFFER_SIZE)
+            print('')
+    TO_DELETE_AT_EXIT.pop()
+
+def main():
+    """Application main."""
+    parser = argparse.ArgumentParser(description='USB stick imager')
+    parser.add_argument(dest='INPUT_VOLUME', nargs=1,
+                        help='volume name, device, UUID, or mountpoint')
+    parser.add_argument(dest='OUTPUT_DIR', nargs=1,
+                        help='output directory for backup image')
+    args = parser.parse_args()
+    volume = find_unique_volume(args.INPUT_VOLUME[0])
+    if volume.mountpoint:
+        unmount_volume(volume.mountpoint)
+    make_image(volume.raw_disk_dev, get_volume_output_path(volume.name, args.OUTPUT_DIR[0]))
+
+if __name__ == '__main__':
+    if os.getuid() != 0:
+        print('Re-running as root for elevated permissions...')
+        os.execvp('sudo', ['sudo', 'python3'] + list(sys.argv))
+    atexit.register(at_exit_cleanup)
+    try:
+        main()
+    except KeyboardInterrupt:
+        print('')
+        print('<break>')
+        sys.exit(2)
+    except subprocess.CalledProcessError as exc:
+        abort(str(exc))
+    except (IOError, OSError) as exc:
+        abort(str(exc))
