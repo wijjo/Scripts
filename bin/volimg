@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+
+"""External drive backup."""
+
+#pylint: disable=too-many-instance-attributes
+#pylint: disable=too-few-public-methods
+#pylint: disable=too-many-arguments
+#pylint: disable=broad-except
+#pylint: disable=global-statement
+#pylint: disable=fixme
+#TODO: fix some or all of the above.
+
+import sys
+import os
+import argparse
+import subprocess
+import time
+import plistlib
+import atexit
+import gzip
+
+INPUT_BUFFER_SIZE = 1024 * 1024
+REPORT_SIZE = INPUT_BUFFER_SIZE * 1024
+REPORT_UNIT = 'GiB'
+OUTPUT_NAME_FORMAT = '{name}-{timestamp}.img.gz'
+TO_DELETE_AT_EXIT = []
+VERBOSE = False
+
+CLI_COMMANDS = []
+
+def cli_command(name, help=None, epilog=None, arguments=None):  #pylint: disable=redefined-builtin
+    """Decorator for CLI command function."""
+    def wrapper(func):
+        class Command:
+            """Data for CLI command."""
+            def __init__(self):
+                self.func = func
+                self.name = name
+                self.help = help
+                self.epilog = epilog
+                self.arguments = arguments
+        CLI_COMMANDS.append(Command())
+        return func
+    return wrapper
+
+class Argument:
+    """CLI command argparse.add_argument() arguments."""
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+def abort(message):
+    """Display critical error and exit."""
+    print('CRITICAL: {}'.format(message))
+    sys.exit(1)
+
+def at_exit_cleanup():
+    """Delete partial files, etc.."""
+    for to_delete in TO_DELETE_AT_EXIT:
+        if os.path.exists(to_delete):
+            try:
+                print('Removing partial file: {}'.format(to_delete))
+                os.remove(to_delete)
+            except Exception as exc:
+                print(str(exc))
+
+def find_in_path(path, name, executable=False):
+    """
+    Find a file in a shell-compatible path string.
+
+    Return path to name if found in path, or None if not found.  Require
+    executable if executable is True.
+    """
+    for directory in path.split(os.pathsep):
+        chk_path = os.path.join(directory, name)
+        if executable:
+            if sys.platform in ('cygwin', 'windows'):
+                for ext in ('', '.exe', '.bat', '.cmd', '.com'):
+                    if os.path.exists(chk_path + ext):
+                        return chk_path
+            elif os.path.exists(chk_path) and (os.stat(chk_path)[0] & 0o111) != 0:
+                return chk_path
+        elif os.path.exists(chk_path):
+            return chk_path
+    return None
+
+def find_executable(*names):
+    """
+    Find an executable program in the shell PATH.
+
+    If multiple names are specified return the first one found in the path.
+
+    Return path to first name found in PATH.
+    """
+    env_path = os.environ['PATH']
+    for name in names:
+        path = find_in_path(env_path, name, executable=True)
+        if path:
+            return os.path.realpath(path)
+    return None
+
+class Volume:
+    """Data for a disk volume."""
+    def __init__(self, disk_dev, volume_dev, filesystem, size, name, uuid, mountpoint):
+        self.disk_dev = disk_dev
+        self.raw_disk_dev = '/dev/r{}'.format(self.disk_dev)
+        self.volume_dev = volume_dev
+        self.filesystem = filesystem
+        self.size = int(size)
+        self.name = name
+        self.uuid = uuid
+        self.mountpoint = mountpoint
+
+def find_volume(identifier):
+    """
+    Look up volume(s) by identifier.
+
+    Identifier may be a volume name, mountpoint, UUID, or device name.
+    """
+    volumes = []
+    proc = subprocess.run(['diskutil', 'list', '-plist'], capture_output=True, check=True)
+    plist_data = plistlib.loads(proc.stdout)
+    all_disks_and_partitions = plist_data['AllDisksAndPartitions']
+    for disk_or_partition in all_disks_and_partitions:
+        for volume in disk_or_partition.get('Partitions', []):
+            if identifier in [
+                    volume.get('VolumeName', ''),
+                    volume.get('MountPoint', ''),
+                    volume.get('VolumeUUID', ''),
+                    volume.get('DeviceIdentifier', ''),
+            ]:
+                volumes.append(Volume(
+                    disk_or_partition['DeviceIdentifier'],
+                    volume['DeviceIdentifier'],
+                    volume['Content'],
+                    volume['Size'],
+                    volume['VolumeName'],
+                    volume['VolumeUUID'],
+                    volume.get('MountPoint'),
+                ))
+    return volumes
+
+def find_unique_volume(identifier):
+    """Find exactly one volume by identifier (see find_volume() function)."""
+    volumes = find_volume(identifier)
+    if not volumes:
+        abort('No volume for "{}" was found.'.format(identifier))
+    if len(volumes) != 1:
+        abort('There are {} volumes for "{}".'.format(len(volumes), identifier))
+    return volumes[0]
+
+def unmount_volume(mountpoint):
+    """Unmount a volume based on a mountpoint."""
+    print('Unmounting: {}'.format(mountpoint))
+    subprocess.run(['diskutil', 'unmount', mountpoint], check=True)
+
+def get_volume_output_path(volume_name, output_dir):
+    """Generate an output path for a volume backup file."""
+    return os.path.join(output_dir, OUTPUT_NAME_FORMAT.format(
+        name=volume_name,
+        timestamp=time.strftime('%Y-%m-%d-%H%M%S')))
+
+def gzip_stream(input_path, output_path):
+    """Write input stream to gzip'ed output file."""
+    gzip_cmd = find_executable('pigz') or find_executable('gzip')
+    if not gzip_cmd:
+        abort('No gzip command found.')
+    # Otherwise use pigz for faster multi-core compression.
+    print('Compressing with "pigz". Use CTRL-T for status.')
+    cmd = 'sudo dd if={input} bs=1M | {gzip} -c -f - > {output}'.format(
+        input=input_path,
+        gzip=gzip_cmd,
+        output=output_path)
+    print(cmd)
+    retcode = os.system(cmd)
+    if retcode != 0:
+        abort('Output command failed with return code {}.'.format(retcode))
+
+@cli_command(
+    'write',
+    help='create a volume image',
+    arguments=[
+        Argument(dest='INPUT_VOLUME', nargs=1,
+                 help='volume name, device, UUID, or mountpoint'),
+        Argument(dest='OUTPUT_DIR', nargs=1,
+                 help='output directory for backup image'),
+])
+def cli_write(args):
+    """Back up input device."""
+    volume = find_unique_volume(args.INPUT_VOLUME[0])
+    if volume.mountpoint:
+        unmount_volume(volume.mountpoint)
+    output_path = get_volume_output_path(volume.name, args.OUTPUT_DIR[0])
+    print('Input device: {}'.format(volume.raw_disk_dev))
+    print(' Output path: {}'.format(output_path))
+    print('-----')
+    TO_DELETE_AT_EXIT.append(output_path)
+    gzip_stream(volume.raw_disk_dev, output_path)
+    TO_DELETE_AT_EXIT.pop()
+
+def main():
+    """Application main, including CLI command line parsing."""
+    parser = argparse.ArgumentParser(description='Mac volume image reader/writer.')
+    parser.add_argument('-v', '--verbose', dest='VERBOSE', action='store_true',
+                        help='enable verbose output')
+    command_parsers = parser.add_subparsers(dest='COMMAND', metavar='COMMAND', required=True)
+    commands_by_name = {}
+    for command in CLI_COMMANDS:
+        commands_by_name[command.name] = command
+        command_parser = command_parsers.add_parser(
+            command.name, help=command.help, epilog=command.epilog)
+        for argument in command.arguments:
+            command_parser.add_argument(*argument.args, **argument.kwargs)
+    args = parser.parse_args()
+    global VERBOSE
+    VERBOSE = args.VERBOSE
+    commands_by_name[args.COMMAND].func(args)
+
+if __name__ == '__main__':
+    # if os.getuid() != 0:
+    #     print('Re-running as root for elevated permissions...')
+    #     os.execvp('sudo', ['sudo', 'python3'] + list(sys.argv))
+    atexit.register(at_exit_cleanup)
+    try:
+        main()
+    except KeyboardInterrupt:
+        print('')
+        print('<break>')
+        sys.exit(2)
+    except subprocess.CalledProcessError as exc:
+        abort(str(exc))
+    except (IOError, OSError) as exc:
+        abort(str(exc))
