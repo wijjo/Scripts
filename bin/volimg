@@ -17,7 +17,7 @@ import subprocess
 import time
 import plistlib
 import atexit
-import gzip
+
 
 INPUT_BUFFER_SIZE = 1024 * 1024
 REPORT_SIZE = INPUT_BUFFER_SIZE * 1024
@@ -27,6 +27,7 @@ TO_DELETE_AT_EXIT = []
 VERBOSE = False
 
 CLI_COMMANDS = []
+
 
 def cli_command(name, help=None, epilog=None, arguments=None):  #pylint: disable=redefined-builtin
     """Decorator for CLI command function."""
@@ -43,16 +44,19 @@ def cli_command(name, help=None, epilog=None, arguments=None):  #pylint: disable
         return func
     return wrapper
 
+
 class Argument:
     """CLI command argparse.add_argument() arguments."""
     def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs
 
+
 def abort(message):
     """Display critical error and exit."""
     print('CRITICAL: {}'.format(message))
     sys.exit(1)
+
 
 def at_exit_cleanup():
     """Delete partial files, etc.."""
@@ -63,6 +67,7 @@ def at_exit_cleanup():
                 os.remove(to_delete)
             except Exception as exc:
                 print(str(exc))
+
 
 def find_in_path(path, name, executable=False):
     """
@@ -84,6 +89,7 @@ def find_in_path(path, name, executable=False):
             return chk_path
     return None
 
+
 def find_executable(*names):
     """
     Find an executable program in the shell PATH.
@@ -99,6 +105,7 @@ def find_executable(*names):
             return os.path.realpath(path)
     return None
 
+
 class Volume:
     """Data for a disk volume."""
     def __init__(self, disk_dev, volume_dev, filesystem, size, name, uuid, mountpoint):
@@ -111,48 +118,72 @@ class Volume:
         self.uuid = uuid
         self.mountpoint = mountpoint
 
-def find_volume(identifier):
-    """
-    Look up volume(s) by identifier.
 
-    Identifier may be a volume name, mountpoint, UUID, or device name.
-    """
-    volumes = []
-    proc = subprocess.run(['diskutil', 'list', '-plist'], capture_output=True, check=True)
-    plist_data = plistlib.loads(proc.stdout)
-    all_disks_and_partitions = plist_data['AllDisksAndPartitions']
-    for disk_or_partition in all_disks_and_partitions:
-        for volume in disk_or_partition.get('Partitions', []):
-            if identifier in [
-                    volume.get('VolumeName', ''),
-                    volume.get('MountPoint', ''),
-                    volume.get('VolumeUUID', ''),
-                    volume.get('DeviceIdentifier', ''),
-            ]:
+class MacOSPlatform:
+    """Platform-specific functionality for MacOS."""
+
+    platform = "darwin"
+
+    @classmethod
+    def list_volumes(cls):
+        """Provide data for currently visible volumes."""
+        volumes = []
+        proc = subprocess.run(['diskutil', 'list', '-plist'],
+                              capture_output=True, check=True)
+        for disk_or_partition in plistlib.loads(
+                proc.stdout)['AllDisksAndPartitions']:
+            for volume in disk_or_partition.get('Partitions', []):
                 volumes.append(Volume(
                     disk_or_partition['DeviceIdentifier'],
-                    volume['DeviceIdentifier'],
-                    volume['Content'],
-                    volume['Size'],
-                    volume['VolumeName'],
-                    volume['VolumeUUID'],
+                    volume.get('DeviceIdentifier'),
+                    volume.get('Content'),
+                    volume.get('Size'),
+                    volume.get('VolumeName'),
+                    volume.get('VolumeUUID'),
                     volume.get('MountPoint'),
                 ))
-    return volumes
+        return volumes
 
-def find_unique_volume(identifier):
-    """Find exactly one volume by identifier (see find_volume() function)."""
-    volumes = find_volume(identifier)
+    @classmethod
+    def unmount(cls, volume):
+        """Unmount a volume based on a mountpoint."""
+        subprocess.run(['diskutil', 'unmount', volume.mountpoint],
+                       check=True)
+
+
+PLATFORMS = [MacOSPlatform]
+PLATFORM = None
+
+
+def volumes_for_identifier(identifier):
+    """Find volume by volume name, mountpoint, UUID, or device name."""
+    return [
+        volume
+        for volume in PLATFORM.list_volumes()
+        if identifier in [
+            volume.name,
+            volume.mountpoint,
+            volume.uuid,
+            volume.disk_dev,
+        ]
+    ]
+
+
+def volume_for_identifier(identifier):
+    """Find exactly one volume by identifier (see volumes_for_identifier())."""
+    volumes = volumes_for_identifier(identifier)
     if not volumes:
         abort('No volume for "{}" was found.'.format(identifier))
     if len(volumes) != 1:
         abort('There are {} volumes for "{}".'.format(len(volumes), identifier))
     return volumes[0]
 
-def unmount_volume(mountpoint):
+
+def volume_unmount(volume):
     """Unmount a volume based on a mountpoint."""
-    print('Unmounting: {}'.format(mountpoint))
-    subprocess.run(['diskutil', 'unmount', mountpoint], check=True)
+    print('Unmounting: {}'.format(volume.mountpoint))
+    PLATFORM.unmount(volume)
+
 
 def get_volume_output_path(volume_name, output_dir):
     """Generate an output path for a volume backup file."""
@@ -176,20 +207,22 @@ def gzip_stream(input_path, output_path):
     if retcode != 0:
         abort('Output command failed with return code {}.'.format(retcode))
 
+
 @cli_command(
-    'write',
-    help='create a volume image',
+    'save',
+    help='make a volume image',
     arguments=[
         Argument(dest='INPUT_VOLUME', nargs=1,
                  help='volume name, device, UUID, or mountpoint'),
         Argument(dest='OUTPUT_DIR', nargs=1,
                  help='output directory for backup image'),
-])
-def cli_write(args):
+    ]
+)
+def cli_save(args):
     """Back up input device."""
-    volume = find_unique_volume(args.INPUT_VOLUME[0])
+    volume = volume_for_identifier(args.INPUT_VOLUME[0])
     if volume.mountpoint:
-        unmount_volume(volume.mountpoint)
+        volume_unmount(volume)
     output_path = get_volume_output_path(volume.name, args.OUTPUT_DIR[0])
     print('Input device: {}'.format(volume.raw_disk_dev))
     print(' Output path: {}'.format(output_path))
@@ -197,6 +230,7 @@ def cli_write(args):
     TO_DELETE_AT_EXIT.append(output_path)
     gzip_stream(volume.raw_disk_dev, output_path)
     TO_DELETE_AT_EXIT.pop()
+
 
 def main():
     """Application main, including CLI command line parsing."""
@@ -212,9 +246,16 @@ def main():
         for argument in command.arguments:
             command_parser.add_argument(*argument.args, **argument.kwargs)
     args = parser.parse_args()
-    global VERBOSE
+    global VERBOSE, PLATFORM
     VERBOSE = args.VERBOSE
+    for platform in PLATFORMS:
+        if platform.platform == sys.platform:
+            PLATFORM = platform
+            break
+    else:
+        abort('The "{}" platform is not supported.'.format(sys.platform))
     commands_by_name[args.COMMAND].func(args)
+
 
 if __name__ == '__main__':
     # if os.getuid() != 0:
