@@ -2,14 +2,6 @@
 
 """External drive backup."""
 
-#pylint: disable=too-many-instance-attributes
-#pylint: disable=too-few-public-methods
-#pylint: disable=too-many-arguments
-#pylint: disable=broad-except
-#pylint: disable=global-statement
-#pylint: disable=fixme
-#TODO: fix some or all of the above.
-
 import sys
 import os
 import argparse
@@ -19,91 +11,122 @@ import plistlib
 import atexit
 
 
-INPUT_BUFFER_SIZE = 1024 * 1024
-REPORT_SIZE = INPUT_BUFFER_SIZE * 1024
-REPORT_UNIT = 'GiB'
-OUTPUT_NAME_FORMAT = '{name}-{timestamp}.img.gz'
-TO_DELETE_AT_EXIT = []
-VERBOSE = False
-
-CLI_COMMANDS = []
+class Constants:
+    """Constant data."""
+    output_name_format = '{name}-{timestamp}.img.gz'
+    app_description = 'Mac volume image reader/writer'
 
 
-def cli_command(name, help=None, epilog=None, arguments=None):  #pylint: disable=redefined-builtin
-    """Decorator for CLI command function."""
-    def wrapper(func):
-        class Command:
-            """Data for CLI command."""
-            def __init__(self):
-                self.func = func
-                self.name = name
-                self.help = help
-                self.epilog = epilog
-                self.arguments = arguments
-        CLI_COMMANDS.append(Command())
-        return func
-    return wrapper
-
-
-class Argument:
-    """CLI command argparse.add_argument() arguments."""
-    def __init__(self, *args, **kwargs):
-        self.args = args
-        self.kwargs = kwargs
-
-
-def abort(message):
-    """Display critical error and exit."""
-    print('CRITICAL: {}'.format(message))
-    sys.exit(1)
-
-
-def at_exit_cleanup():
-    """Delete partial files, etc.."""
-    for to_delete in TO_DELETE_AT_EXIT:
-        if os.path.exists(to_delete):
-            try:
-                print('Removing partial file: {}'.format(to_delete))
-                os.remove(to_delete)
-            except Exception as exc:
-                print(str(exc))
-
-
-def find_in_path(path, name, executable=False):
+class CLI:
     """
-    Find a file in a shell-compatible path string.
+    CLI toolkit class.
 
-    Return path to name if found in path, or None if not found.  Require
-    executable if executable is True.
+    Friendlier wrapper for argparse functionality, plus additional utility
+    functions that are frequently useful for CLI programs.
     """
-    for directory in path.split(os.pathsep):
-        chk_path = os.path.join(directory, name)
-        if executable:
-            if sys.platform in ('cygwin', 'windows'):
-                for ext in ('', '.exe', '.bat', '.cmd', '.com'):
-                    if os.path.exists(chk_path + ext):
-                        return chk_path
-            elif os.path.exists(chk_path) and (os.stat(chk_path)[0] & 0o111) != 0:
-                return chk_path
-        elif os.path.exists(chk_path):
-            return chk_path
-    return None
 
+    commands = []
+    verbose = False
+    platform = None
+    files_to_delete = []
 
-def find_executable(*names):
-    """
-    Find an executable program in the shell PATH.
+    class Command:
+        """Data for CLI command."""
+        def __init__(self, func, name, add_parser_kwargs, arguments):
+            self.func = func
+            self.name = name
+            self.add_parser_kwargs = add_parser_kwargs
+            self.arguments = arguments
 
-    If multiple names are specified return the first one found in the path.
+    class Argument:
+        """CLI command argparse.add_argument() arguments."""
+        def __init__(self, *add_argument_args, **add_argument_kwargs):
+            self.add_argument_args = add_argument_args
+            self.add_argument_kwargs = add_argument_kwargs
 
-    Return path to first name found in PATH.
-    """
-    env_path = os.environ['PATH']
-    for name in names:
-        path = find_in_path(env_path, name, executable=True)
-        if path:
-            return os.path.realpath(path)
-    return None
+    @classmethod
+    def command(cls, name, **add_parser_kwargs):
+        """
+        Decorator for functions implementing CLI sub-commands.
+
+        Accepts any ArgumentParser constructor argument plus an "arguments" keyword
+        that may be assigned a list of Argument objects.
+        """
+        arguments = add_parser_kwargs.pop('arguments')
+        def wrapper(func):
+            cls.commands.append(cls.Command(func, name, add_parser_kwargs, arguments))
+            return func
+        return wrapper
+
+    @classmethod
+    def main(cls, description, supported_platforms=None):
+        """Application main, including CLI command line parsing."""
+        parser = argparse.ArgumentParser(description=description)
+        parser.add_argument('-v', '--verbose', dest='VERBOSE', action='store_true',
+                            help='enable verbose output')
+        command_parsers = parser.add_subparsers(dest='COMMAND', metavar='COMMAND', required=True)
+        commands_by_name = {}
+        for command in cls.commands:
+            commands_by_name[command.name] = command
+            command_parser = command_parsers.add_parser(command.name, **command.add_parser_kwargs)
+            for argument in command.arguments:
+                command_parser.add_argument(*argument.add_argument_args,
+                                            **argument.add_argument_kwargs)
+        args = parser.parse_args()
+        cls.verbose = args.VERBOSE
+        if supported_platforms:
+            for platform in supported_platforms:
+                if platform.platform == sys.platform:
+                    cls.platform = platform
+                    break
+            else:
+                cls.abort('The "{}" platform is not supported.'.format(sys.platform))
+        atexit.register(cls.at_exit)
+        commands_by_name[args.COMMAND].func(args)
+
+    @classmethod
+    def at_exit(cls):
+        """Delete partial files, etc.."""
+        for file_to_delete in cls.files_to_delete:
+            if os.path.exists(file_to_delete):
+                try:
+                    print('Removing partial file: {}'.format(file_to_delete))
+                    os.remove(file_to_delete)
+                except (IOError, OSError) as exc:
+                    print(str(exc))
+
+    @classmethod
+    def register_file_to_delete(cls, path):
+        """Add a file to be deleted at exit."""
+        if path not in cls.files_to_delete:
+            cls.files_to_delete.append(path)
+
+    @classmethod
+    def unregister_file_to_delete(cls, path):
+        """Remove a file from the to-be-deleted at exit list."""
+        if path in cls.files_to_delete:
+            cls.files_to_delete.remove(path)
+
+    @classmethod
+    def abort(cls, message):
+        """Display critical error and exit."""
+        sys.stderr.write('CRITICAL: {}{}'.format(message, os.linesep))
+        sys.exit(1)
+
+    @classmethod
+    def info(cls, message):
+        """Display general info message."""
+        sys.stdout.write('{}{}'.format(message, os.linesep))
+
+    @classmethod
+    def warning(cls, message):
+        """Display warning message."""
+        sys.stderr.write('WARNING: {}{}'.format(message, os.linesep))
+
+    @classmethod
+    def error(cls, message):
+        """Display error message."""
+        sys.stderr.write('ERROR: {}{}'.format(message, os.linesep))
 
 
 class Volume:
@@ -151,15 +174,11 @@ class MacOSPlatform:
                        check=True)
 
 
-PLATFORMS = [MacOSPlatform]
-PLATFORM = None
-
-
 def volumes_for_identifier(identifier):
     """Find volume by volume name, mountpoint, UUID, or device name."""
     return [
         volume
-        for volume in PLATFORM.list_volumes()
+        for volume in CLI.platform.list_volumes()
         if identifier in [
             volume.name,
             volume.mountpoint,
@@ -169,106 +188,115 @@ def volumes_for_identifier(identifier):
     ]
 
 
+def find_in_path(path, name, executable=False):
+    """
+    Find a file in a shell-compatible path string.
+
+    Return path to name if found in path, or None if not found.  Require
+    executable if executable is True.
+    """
+    for directory in path.split(os.pathsep):
+        chk_path = os.path.join(directory, name)
+        if executable:
+            if sys.platform in ('cygwin', 'windows'):
+                for ext in ('', '.exe', '.bat', '.cmd', '.com'):
+                    if os.path.exists(chk_path + ext):
+                        return chk_path
+            elif os.path.exists(chk_path) and (os.stat(chk_path)[0] & 0o111) != 0:
+                return chk_path
+        elif os.path.exists(chk_path):
+            return chk_path
+    return None
+
+
+def find_executable(*names):
+    """
+    Find an executable program in the shell PATH.
+
+    If multiple names are specified return the first one found in the path.
+
+    Return path to first name found in PATH.
+    """
+    env_path = os.environ['PATH']
+    for name in names:
+        path = find_in_path(env_path, name, executable=True)
+        if path:
+            return os.path.realpath(path)
+    return None
+
+
 def volume_for_identifier(identifier):
     """Find exactly one volume by identifier (see volumes_for_identifier())."""
     volumes = volumes_for_identifier(identifier)
     if not volumes:
-        abort('No volume for "{}" was found.'.format(identifier))
+        CLI.abort('No volume for "{}" was found.'.format(identifier))
     if len(volumes) != 1:
-        abort('There are {} volumes for "{}".'.format(len(volumes), identifier))
+        CLI.abort('There are {} volumes for "{}".'.format(len(volumes), identifier))
     return volumes[0]
 
 
 def volume_unmount(volume):
     """Unmount a volume based on a mountpoint."""
-    print('Unmounting: {}'.format(volume.mountpoint))
-    PLATFORM.unmount(volume)
+    CLI.platform.unmount(volume)
 
 
 def get_volume_output_path(volume_name, output_dir):
     """Generate an output path for a volume backup file."""
-    return os.path.join(output_dir, OUTPUT_NAME_FORMAT.format(
+    return os.path.join(output_dir, Constants.output_name_format.format(
         name=volume_name,
         timestamp=time.strftime('%Y-%m-%d-%H%M%S')))
+
 
 def gzip_stream(input_path, output_path):
     """Write input stream to gzip'ed output file."""
     gzip_cmd = find_executable('pigz') or find_executable('gzip')
     if not gzip_cmd:
-        abort('No gzip command found.')
+        CLI.abort('No gzip command found.')
     # Otherwise use pigz for faster multi-core compression.
-    print('Compressing with "pigz". Use CTRL-T for status.')
+    CLI.info('Compressing with "pigz". Use CTRL-T for status.')
     cmd = 'sudo dd if={input} bs=1M | {gzip} -c -f - > {output}'.format(
         input=input_path,
         gzip=gzip_cmd,
         output=output_path)
-    print(cmd)
+    CLI.info(cmd)
     retcode = os.system(cmd)
     if retcode != 0:
-        abort('Output command failed with return code {}.'.format(retcode))
+        CLI.abort('Output command failed with return code {}.'.format(retcode))
 
 
-@cli_command(
+@CLI.command(
     'save',
     help='make a volume image',
     arguments=[
-        Argument(dest='INPUT_VOLUME', nargs=1,
-                 help='volume name, device, UUID, or mountpoint'),
-        Argument(dest='OUTPUT_DIR', nargs=1,
-                 help='output directory for backup image'),
+        CLI.Argument(dest='INPUT_VOLUME', nargs=1,
+                     help='volume name, device, UUID, or mountpoint'),
+        CLI.Argument(dest='OUTPUT_DIR', nargs=1,
+                     help='output directory for backup image'),
     ]
 )
 def cli_save(args):
     """Back up input device."""
     volume = volume_for_identifier(args.INPUT_VOLUME[0])
     if volume.mountpoint:
+        CLI.info('Unmounting: {}'.format(volume.mountpoint))
         volume_unmount(volume)
     output_path = get_volume_output_path(volume.name, args.OUTPUT_DIR[0])
-    print('Input device: {}'.format(volume.raw_disk_dev))
-    print(' Output path: {}'.format(output_path))
-    print('-----')
-    TO_DELETE_AT_EXIT.append(output_path)
+    CLI.info('Input device: {}'.format(volume.raw_disk_dev))
+    CLI.info(' Output path: {}'.format(output_path))
+    CLI.info('-----')
+    CLI.register_file_to_delete(output_path)
     gzip_stream(volume.raw_disk_dev, output_path)
-    TO_DELETE_AT_EXIT.pop()
-
-
-def main():
-    """Application main, including CLI command line parsing."""
-    parser = argparse.ArgumentParser(description='Mac volume image reader/writer.')
-    parser.add_argument('-v', '--verbose', dest='VERBOSE', action='store_true',
-                        help='enable verbose output')
-    command_parsers = parser.add_subparsers(dest='COMMAND', metavar='COMMAND', required=True)
-    commands_by_name = {}
-    for command in CLI_COMMANDS:
-        commands_by_name[command.name] = command
-        command_parser = command_parsers.add_parser(
-            command.name, help=command.help, epilog=command.epilog)
-        for argument in command.arguments:
-            command_parser.add_argument(*argument.args, **argument.kwargs)
-    args = parser.parse_args()
-    global VERBOSE, PLATFORM
-    VERBOSE = args.VERBOSE
-    for platform in PLATFORMS:
-        if platform.platform == sys.platform:
-            PLATFORM = platform
-            break
-    else:
-        abort('The "{}" platform is not supported.'.format(sys.platform))
-    commands_by_name[args.COMMAND].func(args)
+    CLI.unregister_file_to_delete(output_path)
 
 
 if __name__ == '__main__':
-    # if os.getuid() != 0:
-    #     print('Re-running as root for elevated permissions...')
-    #     os.execvp('sudo', ['sudo', 'python3'] + list(sys.argv))
-    atexit.register(at_exit_cleanup)
     try:
-        main()
+        CLI.main(Constants.app_description, supported_platforms=[MacOSPlatform])
     except KeyboardInterrupt:
-        print('')
-        print('<break>')
+        CLI.info('')
+        CLI.info('<break>')
         sys.exit(2)
     except subprocess.CalledProcessError as exc:
-        abort(str(exc))
+        CLI.abort(str(exc))
     except (IOError, OSError) as exc:
-        abort(str(exc))
+        CLI.abort(str(exc))
