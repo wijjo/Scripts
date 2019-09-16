@@ -36,6 +36,15 @@ def generate_volume_output_path(volume_name, output_dir):
         timestamp=time.strftime('%Y-%m-%d-%H%M%S')))
 
 
+def get_umounted_volume(identifier):
+    """Provide unmounted volume data based on name, device, UUID, or mountpoint."""
+    volume = disk.volume_for_identifier(identifier)
+    if volume and volume.mountpoint:
+        console.info('Unmounting: {}'.format(volume.mountpoint))
+        disk.volume_unmount(volume)
+    return volume
+
+
 def at_exit():
     """Delete partial files, etc.."""
     for file_to_delete in Cleanup.files_to_delete:
@@ -54,26 +63,45 @@ def main(_runner):
 
 
 @cli.Command(
-    name='save',
-    description='make a volume image',
+    name='backup',
+    description='make a volume image backup',
     args=[
         cli.String('INPUT_VOLUME', 'volume name, device, UUID, or mountpoint', nargs=1),
         cli.String('OUTPUT_DIR', 'output directory for backup image', nargs=1),
     ]
 )
-def cli_save(runner):
-    """Back up input device."""
-    volume = disk.volume_for_identifier(runner.arg.INPUT_VOLUME[0])
-    if volume.mountpoint:
-        console.info('Unmounting: {}'.format(volume.mountpoint))
-        disk.volume_unmount(volume)
+def cli_backup(runner):
+    """Back up from an input device to a gzip-compressed image file."""
+    volume = get_umounted_volume(runner.arg.INPUT_VOLUME[0])
     output_path = generate_volume_output_path(volume.name, runner.arg.OUTPUT_DIR[0])
-    console.info('Input device: {}'.format(volume.raw_disk_dev))
+    console.info('Input device: {} ({})'.format(volume.raw_disk_dev, volume.short_summary()))
     console.info(' Output path: {}'.format(output_path))
-    console.info('-----')
+    console.pause('Ready to backup volume?')
     Cleanup.files_to_delete.append(output_path)
-    disk.gzip_device(volume.raw_disk_dev, output_path)
+    disk.create_device_image(volume.raw_disk_dev, output_path, compression='gzip')
     Cleanup.files_to_delete.pop()
+
+
+@cli.Command(
+    name='restore',
+    description='restore a volume image backup',
+    args=[
+        cli.String('IMAGE_PATH', 'backup image path', nargs=1),
+        cli.String('OUTPUT_VOLUME', 'volume name, device, UUID, or mountpoint', nargs=1),
+    ]
+)
+def cli_restore(runner):
+    """Restore from a gzip-compressed image file to an output device."""
+    input_path = runner.arg.IMAGE_PATH[0]
+    if not os.path.isfile(input_path):
+        console.abort('Image path "{}" does not exist.'.format(input_path))
+    if not input_path.endswith('.img.gz'):
+        console.abort('Image path "{}" does not have a ".img.gz" extension.'.format(input_path))
+    volume = get_umounted_volume(runner.arg.OUTPUT_VOLUME[0])
+    console.info('   Input path: {}'.format(input_path))
+    console.info('Output device: {} ({})'.format(volume.raw_disk_dev, volume.short_summary()))
+    console.pause('Ready to restore volume?')
+    disk.restore_device_image(volume.raw_disk_dev, input_path, compression='gzip')
 
 
 if __name__ == '__main__':
