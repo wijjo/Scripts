@@ -20,7 +20,7 @@ from scriptbase import disk     #pylint: disable=import-error
 
 class Constants:
     """Constant data."""
-    output_name_format = '{name}-{timestamp}.img.gz'
+    output_name_format = '{name}-{timestamp}.img.{ext}'
     app_description = 'Mac volume image reader/writer'
 
 
@@ -29,11 +29,13 @@ class Cleanup:
     files_to_delete = []
 
 
-def generate_volume_output_path(volume_name, output_dir):
+def generate_volume_output_path(volume_name, output_dir, compression):
     """Generate an output path for a volume backup file."""
+    ext = 'gz' if compression == 'gzip' else compression
     return os.path.join(output_dir, Constants.output_name_format.format(
         name=volume_name,
-        timestamp=time.strftime('%Y-%m-%d-%H%M%S')))
+        timestamp=time.strftime('%Y-%m-%d-%H%M%S'),
+        ext=ext))
 
 
 def get_umounted_volume(identifier):
@@ -68,18 +70,27 @@ def main(_runner):
     args=[
         cli.String('INPUT_VOLUME', 'volume name, device, UUID, or mountpoint', nargs=1),
         cli.String('OUTPUT_DIR', 'output directory for backup image', nargs=1),
+        cli.String('COMPRESSION', 'compression, "gzip" (default) or "xz"',
+                   '-c', '--compression'),
     ]
 )
 def cli_backup(runner):
     """Back up from an input device to a gzip-compressed image file."""
-    volume = get_umounted_volume(runner.arg.INPUT_VOLUME[0])
-    output_path = generate_volume_output_path(volume.name, runner.arg.OUTPUT_DIR[0])
-    console.info('Input device: {} ({})'.format(volume.raw_disk_dev, volume.short_summary()))
-    console.info(' Output path: {}'.format(output_path))
-    console.pause('Ready to backup volume?')
-    Cleanup.files_to_delete.append(output_path)
-    disk.create_device_image(volume.raw_disk_dev, output_path, compression='gzip')
-    Cleanup.files_to_delete.pop()
+    with runner.context() as ctx:
+        volume = get_umounted_volume(runner.arg.INPUT_VOLUME[0])
+        ctx.volume_name = volume.name
+        ctx.raw_disk = volume.raw_disk_dev
+        ctx.volume_summary = volume.short_summary()
+        ctx.compression = runner.arg.COMPRESSION or 'gzip'
+        ctx.output_path = generate_volume_output_path(
+            volume.name, runner.arg.OUTPUT_DIR[0], ctx.compression)
+        ctx.info('Input device: {raw_disk} ({volume_summary})')
+        ctx.info(' Output path: {output_path}')
+        ctx.info(' Compression: {compression}')
+        ctx.pause('Ready to backup volume?')
+        Cleanup.files_to_delete.append(ctx.output_path)
+        disk.backup_device(ctx.raw_disk, ctx.output_path, compression=ctx.compression)
+        Cleanup.files_to_delete.pop()
 
 
 @cli.Command(
@@ -92,16 +103,24 @@ def cli_backup(runner):
 )
 def cli_restore(runner):
     """Restore from a gzip-compressed image file to an output device."""
-    input_path = runner.arg.IMAGE_PATH[0]
-    if not os.path.isfile(input_path):
-        console.abort('Image path "{}" does not exist.'.format(input_path))
-    if not input_path.endswith('.img.gz'):
-        console.abort('Image path "{}" does not have a ".img.gz" extension.'.format(input_path))
-    volume = get_umounted_volume(runner.arg.OUTPUT_VOLUME[0])
-    console.info('   Input path: {}'.format(input_path))
-    console.info('Output device: {} ({})'.format(volume.raw_disk_dev, volume.short_summary()))
-    console.pause('Ready to restore volume?')
-    disk.restore_device_image(volume.raw_disk_dev, input_path, compression='gzip')
+    with runner.context() as ctx:
+        ctx.input_path = runner.arg.IMAGE_PATH[0]
+        if not os.path.isfile(ctx.input_path):
+            ctx.abort('Image path "{input_path}" does not exist.')
+        if ctx.input_path.endswith('.img.gz'):
+            ctx.compression = 'gzip'
+        elif ctx.input_path.endswith('.img.xz'):
+            ctx.compression = 'xz'
+        else:
+            ctx.abort('Image path "{input_path}" does not have a ".img.<compression>" extension.')
+        volume = get_umounted_volume(runner.arg.OUTPUT_VOLUME[0])
+        ctx.raw_disk = volume.raw_disk_dev
+        ctx.summary = volume.short_summary()
+        ctx.info('   Input path: {input_path}')
+        ctx.info('Output device: {raw_disk} ({summary})')
+        ctx.info('  Compression: {compression}')
+        ctx.pause('Ready to restore volume?')
+        disk.restore_device(ctx.raw_disk, ctx.input_path, compression=ctx.compression)
 
 
 if __name__ == '__main__':
