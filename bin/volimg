@@ -9,11 +9,11 @@ import time
 import atexit
 
 try:
-    from scriptbase import cli
+    from scriptbase.argdeco import CLI
 except ImportError:
     sys.path.insert(0, os.path.join(
         os.path.dirname(os.path.dirname(__file__)), 'ext', 'scriptbase'))
-    from scriptbase import cli
+    from scriptbase.argdeco import CLI
 from scriptbase import console  #pylint: disable=import-error
 from scriptbase import disk     #pylint: disable=import-error
 
@@ -58,79 +58,90 @@ def at_exit():
                 console.error(exc)
 
 
-@cli.Main(Constants.app_description)
-def main(_runner):
+@CLI.Main(
+    description=Constants.app_description,
+    groups=[
+        CLI.CommandGroup('commands'),
+    ]
+)
+def main(_args):
     """Called by cli module at startup."""
     atexit.register(at_exit)
 
 
-@cli.Command(
-    name='backup',
+@CLI.Command(
+    'backup',
     description='make a volume image backup',
-    args=[
-        cli.String('INPUT_VOLUME', 'volume name, device, UUID, or mountpoint', nargs=1),
-        cli.String('OUTPUT_DIR', 'output directory for backup image', nargs=1),
-        cli.String('COMPRESSION', 'compression, "gzip" (default) or "xz"',
-                   '-c', '--compression'),
+    arguments=[
+        CLI.Opt.String('COMPRESSION',
+                       ['-c', '--compression'],
+                       'compression, "gzip" (default) or "xz"',
+                       choices=['gzip', 'xz']),
+        CLI.Arg.String('INPUT_VOLUME',
+                       'volume name, device, UUID, or mountpoint'),
+        CLI.Arg.String('OUTPUT_DIR',
+                       'output directory for backup image'),
     ]
 )
-def cli_backup(runner):
+def cli_backup(args):
     """Back up from an input device to a gzip-compressed image file."""
-    with runner.context() as ctx:
-        volume = get_umounted_volume(runner.arg.INPUT_VOLUME[0])
-        ctx.volume_name = volume.name
-        ctx.raw_disk = volume.raw_disk_dev
-        ctx.volume_summary = volume.short_summary()
-        ctx.compression = runner.arg.COMPRESSION or 'gzip'
-        ctx.output_path = generate_volume_output_path(
-            volume.name, runner.arg.OUTPUT_DIR[0], ctx.compression)
-        ctx.info('Input device: {raw_disk} ({volume_summary})')
-        ctx.info(' Output path: {output_path}')
-        ctx.info(' Compression: {compression}')
-        ctx.pause('Ready to backup volume?')
-        Cleanup.files_to_delete.append(ctx.output_path)
-        disk.backup_device(ctx.raw_disk, ctx.output_path, compression=ctx.compression)
-        Cleanup.files_to_delete.pop()
+    ctx = console.Context()
+    volume = get_umounted_volume(args.INPUT_VOLUME)
+    ctx.volume_name = volume.name
+    ctx.raw_disk = volume.raw_disk_dev
+    ctx.volume_summary = volume.short_summary()
+    ctx.compression = args.COMPRESSION or 'gzip'
+    ctx.output_path = generate_volume_output_path(
+        volume.name, args.OUTPUT_DIR, ctx.compression)
+    ctx.info('Input device: {raw_disk} ({volume_summary})')
+    ctx.info(' Output path: {output_path}')
+    ctx.info(' Compression: {compression}')
+    ctx.pause('Ready to backup volume?')
+    Cleanup.files_to_delete.append(ctx.output_path)
+    disk.backup_device(ctx.raw_disk, ctx.output_path, compression=ctx.compression)
+    Cleanup.files_to_delete.pop()
 
 
-@cli.Command(
-    name='restore',
+@CLI.Command(
+    'restore',
     description='restore a volume image backup',
-    args=[
-        cli.String('IMAGE_PATH', 'backup image path', nargs=1),
-        cli.String('OUTPUT_VOLUME', 'volume name, device, UUID, or mountpoint', nargs=1),
+    arguments=[
+        CLI.Arg.String('IMAGE_PATH',
+                       'backup image path'),
+        CLI.Arg.String('OUTPUT_VOLUME',
+                       'volume name, device, UUID, or mountpoint'),
     ]
 )
-def cli_restore(runner):
+def cli_restore(args):
     """Restore from a gzip-compressed image file to an output device."""
-    with runner.context() as ctx:
-        ctx.input_path = runner.arg.IMAGE_PATH[0]
-        if not os.path.isfile(ctx.input_path):
-            ctx.abort('Image path "{input_path}" does not exist.')
-        if ctx.input_path.endswith('.img.gz'):
-            ctx.compression = 'gzip'
-        elif ctx.input_path.endswith('.img.xz'):
-            ctx.compression = 'xz'
-        else:
-            ctx.abort('Image path "{input_path}" does not have a ".img.<compression>" extension.')
-        volume = get_umounted_volume(runner.arg.OUTPUT_VOLUME[0])
-        ctx.raw_disk = volume.raw_disk_dev
-        ctx.summary = volume.short_summary()
-        ctx.info('   Input path: {input_path}')
-        ctx.info('Output device: {raw_disk} ({summary})')
-        ctx.info('  Compression: {compression}')
-        ctx.pause('Ready to restore volume?')
-        disk.restore_device(ctx.raw_disk, ctx.input_path, compression=ctx.compression)
+    ctx = console.Context()
+    ctx.input_path = args.IMAGE_PATH
+    if not os.path.isfile(ctx.input_path):
+        ctx.abort('Image path "{input_path}" does not exist.')
+    if ctx.input_path.endswith('.img.gz'):
+        ctx.compression = 'gzip'
+    elif ctx.input_path.endswith('.img.xz'):
+        ctx.compression = 'xz'
+    else:
+        ctx.abort('Image path "{input_path}" does not have a ".img.<compression>" extension.')
+    volume = get_umounted_volume(args.OUTPUT_VOLUME)
+    ctx.raw_disk = volume.raw_disk_dev
+    ctx.summary = volume.short_summary()
+    ctx.info('   Input path: {input_path}')
+    ctx.info('Output device: {raw_disk} ({summary})')
+    ctx.info('  Compression: {compression}')
+    ctx.pause('Ready to restore volume?')
+    disk.restore_device(ctx.raw_disk, ctx.input_path, compression=ctx.compression)
 
 
 if __name__ == '__main__':
     try:
-        cli.main()
+        CLI.main()
     except KeyboardInterrupt:
         console.info('')
         console.info('<break>')
         sys.exit(2)
     except subprocess.CalledProcessError as exc:
-        console.abort(str(exc))
+        console.abort(exc)
     except (IOError, OSError) as exc:
-        console.abort(str(exc))
+        console.abort(exc)
