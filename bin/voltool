@@ -20,7 +20,7 @@ from scriptbase import disk     #pylint: disable=import-error
 
 class Constants:
     """Constant data."""
-    output_name_format = '{name}-{timestamp}.img.{ext}'
+    output_name_format = '{name}-{timestamp}-{filesystem}.img.{ext}'
     app_description = 'Mac volume image reader/writer'
 
 
@@ -29,11 +29,12 @@ class Cleanup:
     files_to_delete = []
 
 
-def generate_volume_output_path(volume_name, output_dir, compression):
+def generate_volume_output_path(volume, output_dir, compression):
     """Generate an output path for a volume backup file."""
     ext = 'gz' if compression == 'gzip' else compression
     return os.path.join(output_dir, Constants.output_name_format.format(
-        name=volume_name,
+        name=volume.name,
+        filesystem=volume.filesystem,
         timestamp=time.strftime('%Y-%m-%d-%H%M%S'),
         ext=ext))
 
@@ -89,8 +90,7 @@ def cli_backup(args):
     ctx.raw_disk = volume.raw_disk_dev
     ctx.volume_summary = volume.short_summary()
     ctx.compression = args.COMPRESSION or 'gzip'
-    ctx.output_path = generate_volume_output_path(
-        volume.name, args.OUTPUT_DIR, ctx.compression)
+    ctx.output_path = generate_volume_output_path(volume, args.OUTPUT_DIR, ctx.compression)
     ctx.info('Input device: {raw_disk} ({volume_summary})')
     ctx.info(' Output path: {output_path}')
     ctx.info(' Compression: {compression}')
@@ -130,6 +130,25 @@ def cli_restore(args):
     ctx.info('  Compression: {compression}')
     ctx.pause('Ready to restore volume?')
     disk.restore_device(ctx.raw_disk, ctx.input_path, compression=ctx.compression)
+
+
+@CLI.Command(
+    'list',
+    description='list volumes',
+)
+def cli_list(_args):
+    """List volumes."""
+    for volume in disk.volumes_list():
+        ctx = console.Context(volume.__dict__)
+        ctx.info(
+            '',
+            'Name:            {name}',
+            'Device:          {volume_dev}',
+            'Parent disk:     {disk_dev}',
+            'Parent raw disk: {raw_disk_dev}',
+            'Filesystem:      {filesystem}',
+            'UUID:            {uuid}',
+        )
 
 
 if __name__ == '__main__':
