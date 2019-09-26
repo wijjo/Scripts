@@ -60,9 +60,7 @@ def at_exit():
 
 @CLI.Main(
     description=Constants.app_description,
-    groups=[
-        CLI.CommandGroup('commands'),
-    ]
+    groups=[CLI.CommandGroup('commands')]
 )
 def main(_args):
     """Called by cli module at startup."""
@@ -84,7 +82,7 @@ def main(_args):
     ]
 )
 def cli_backup(args):
-    """Back up from an input device to a gzip-compressed image file."""
+    """Back up from an input device to a compressed image file."""
     ctx = console.Context()
     volume = get_umounted_volume(args.INPUT_VOLUME)
     ctx.volume_name = volume.name
