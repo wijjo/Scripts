@@ -8,20 +8,16 @@ import subprocess
 import time
 import atexit
 
-try:
-    from scriptbase.argdeco import CLI
-except ImportError:
-    sys.path.insert(0, os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), 'ext', 'scriptbase'))
-    from scriptbase.argdeco import CLI
-from scriptbase import console  #pylint: disable=import-error
-from scriptbase import disk     #pylint: disable=import-error
+# Make pylint trust these location-sensitive imports.
+from lib import import_scriptbase   #pylint: disable=unused-import
+from scriptbase.argdeco import CLI  #pylint: disable=import-error
+from scriptbase import console      #pylint: disable=import-error
+from scriptbase import disk         #pylint: disable=import-error
 
 
 class Constants:
     """Constant data."""
     output_name_format = '{name}-{timestamp}-{filesystem}.img.{ext}'
-    app_description = 'Mac volume image reader/writer'
 
 
 class Cleanup:
@@ -29,7 +25,7 @@ class Cleanup:
     files_to_delete = []
 
 
-def generate_volume_output_path(volume, output_dir, compression):
+def generate_volume_backup_path(volume, output_dir, compression):
     """Generate an output path for a volume backup file."""
     ext = 'gz' if compression == 'gzip' else compression
     return os.path.join(output_dir, Constants.output_name_format.format(
@@ -39,12 +35,32 @@ def generate_volume_output_path(volume, output_dir, compression):
         ext=ext))
 
 
-def get_umounted_volume(identifier):
-    """Provide unmounted volume data based on name, device, UUID, or mountpoint."""
+def get_volume(identifier, mount_state):
+    """
+    Get volume based on name, device, UUID, or mountpoint, plus mount status.
+
+        mount_state:
+            0   don't care
+            1   require mounted
+            2   require unmounted
+            3   unmount if mounted
+    """
     volume = disk.volume_for_identifier(identifier)
-    if volume and volume.mountpoint:
-        console.info('Unmounting: {}'.format(volume.mountpoint))
-        disk.volume_unmount(volume)
+    if volume:
+        if mount_state == 1:
+            # Require mounted.
+            if not volume.mountpoint:
+                console.abort('Volume for "{}" is not mounted.'.format(identifier))
+        elif mount_state == 2:
+            # Require unmounted.
+            if volume.mountpoint:
+                console.abort('Volume for "{}" is mounted as "{}".'
+                              .format(identifier, volume.mountpoint))
+        elif mount_state == 3:
+            # Unmount as needed.
+            if volume.mountpoint:
+                console.info('Unmounting: {}'.format(volume.mountpoint))
+                disk.volume_unmount(volume)
     return volume
 
 
@@ -60,8 +76,8 @@ def at_exit():
 
 
 @CLI.Main(
-    description=Constants.app_description,
-    groups=[CLI.CommandGroup('commands')]
+    description='Mac volume image reader/writer',
+    add_help=True,
 )
 def main(_args):
     """Called by cli module at startup."""
@@ -72,25 +88,22 @@ def main(_args):
     'backup',
     description='make a volume image backup',
     arguments=[
-        CLI.Opt.String('COMPRESSION',
-                       ['-c', '--compression'],
-                       'compression, "gzip" (default) or "xz"',
-                       choices=['gzip', 'xz']),
-        CLI.Arg.String('INPUT_VOLUME',
-                       'volume name, device, UUID, or mountpoint'),
-        CLI.Arg.String('OUTPUT_DIR',
-                       'output directory for backup image'),
-    ]
+        (['-c', '--compression'],
+         CLI.String('COMPRESSION', 'compression, "gzip" (default) or "xz"',
+                    choices=['gzip', 'xz'])),
+        CLI.String('INPUT_VOLUME', 'volume name, device, UUID, or mountpoint'),
+        CLI.String('OUTPUT_DIR', 'output directory for backup image'),
+    ],
 )
 def cli_backup(args):
     """Back up from an input device to a compressed image file."""
     ctx = console.Context()
-    volume = get_umounted_volume(args.INPUT_VOLUME)
+    volume = get_volume(args.INPUT_VOLUME, 3)
     ctx.volume_name = volume.name
     ctx.raw_disk = volume.raw_disk_dev
     ctx.volume_summary = volume.short_summary()
     ctx.compression = args.COMPRESSION or 'gzip'
-    ctx.output_path = generate_volume_output_path(volume, args.OUTPUT_DIR, ctx.compression)
+    ctx.output_path = generate_volume_backup_path(volume, args.OUTPUT_DIR, ctx.compression)
     ctx.info('Input device: {raw_disk} ({volume_summary})')
     ctx.info(' Output path: {output_path}')
     ctx.info(' Compression: {compression}')
@@ -104,11 +117,9 @@ def cli_backup(args):
     'restore',
     description='restore a volume image backup',
     arguments=[
-        CLI.Arg.String('IMAGE_PATH',
-                       'backup image path'),
-        CLI.Arg.String('OUTPUT_VOLUME',
-                       'volume name, device, UUID, or mountpoint'),
-    ]
+        CLI.String('IMAGE_PATH', 'backup image path'),
+        CLI.String('OUTPUT_VOLUME', 'volume name, device, UUID, or mountpoint'),
+    ],
 )
 def cli_restore(args):
     """Restore from a gzip-compressed image file to an output device."""
@@ -122,7 +133,7 @@ def cli_restore(args):
         ctx.compression = 'xz'
     else:
         ctx.abort('Image path "{input_path}" does not have a ".img.<compression>" extension.')
-    volume = get_umounted_volume(args.OUTPUT_VOLUME)
+    volume = get_volume(args.OUTPUT_VOLUME, 3)
     ctx.raw_disk = volume.raw_disk_dev
     ctx.summary = volume.short_summary()
     ctx.info('   Input path: {input_path}')
@@ -149,6 +160,31 @@ def cli_list(_args):
             'Filesystem:      {filesystem}',
             'UUID:            {uuid}',
         )
+
+
+@CLI.Command(
+    'mac',
+    description='enable/disable Mac features for volume',
+    arguments=[
+        CLI.String('VOLUME', 'volume name, device, UUID, or mountpoint'),
+    ],
+)
+def cli_mac(args):
+    """Enable or disable various kinds of Mac junk files for a volume."""
+    ctx = console.Context()
+    volume = get_volume(args.INPUT_VOLUME, 1)
+    ctx.volume_name = volume.name
+    ctx.raw_disk = volume.raw_disk_dev
+    ctx.volume_summary = volume.short_summary()
+    ctx.compression = args.COMPRESSION or 'gzip'
+    ctx.output_path = generate_volume_backup_path(volume, args.OUTPUT_DIR, ctx.compression)
+    ctx.info('Input device: {raw_disk} ({volume_summary})')
+    ctx.info(' Output path: {output_path}')
+    ctx.info(' Compression: {compression}')
+    ctx.pause('Ready to backup volume?')
+    Cleanup.files_to_delete.append(ctx.output_path)
+    disk.backup_device(ctx.raw_disk, ctx.output_path, compression=ctx.compression)
+    Cleanup.files_to_delete.pop()
 
 
 if __name__ == '__main__':
