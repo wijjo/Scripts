@@ -214,22 +214,6 @@ def rename(runner):
 
 
 @cli.Command(
-    description='Use "hub" command to submit a pull request for review.',
-    args=[
-        cli.String('TITLE', 'pull request title'),
-    ],
-)
-def review(runner):
-    """Review command implementation."""
-    tracking_branch = git.get_tracking_branch()
-    branch = tracking_branch.split('/')[1]
-    if not shell.find_executable('hub'):
-        console.abort('The hub command must be installed. (http://defunkt.io/hub/)',
-                      'OS X Homebrew command: brew install hub')
-    runner.shell('hub pull-request "%s" -b %s' % (runner.arg.TITLE, branch))
-
-
-@cli.Command(
     description='Display the repository URL.',
     args=[
     ],
