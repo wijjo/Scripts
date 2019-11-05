@@ -1,4 +1,10 @@
-# Scripts
+# Introduction
+
+This project has a set of scripts in the `bin` folder, with other folders holding supporting files.
+
+# Script abstracts
+
+This lists a subset of the available commands. Please see the `bin` folder for more.
 
 ## follow
 
