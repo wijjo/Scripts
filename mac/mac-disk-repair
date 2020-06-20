@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+# Copyright 2016-17 Steven Cooper
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import sys
+import argparse
+import subprocess
+import plistlib
+from typing import Text
+
+
+def abort(message: Text):
+    """Display fatal error and quit."""
+    sys.stderr.write(f'FATAL: {message}\n')
+    sys.exit(1)
+
+
+def get_disk(descriptor: Text) -> Text:
+    """Convert disk descriptor to device."""
+    proc = subprocess.run(['diskutil', 'list', '-plist', descriptor],
+                          capture_output=True, check=False)
+    if proc.returncode != 0:
+        abort(f'Bad disk descriptor: {descriptor}')
+    dev_names = plistlib.loads(proc.stdout)['AllDisks']
+    if not dev_names:
+        abort(f'No disks found for: {descriptor}')
+    if len(dev_names) > 1:
+        abort(f'Too many disks ({len(dev_names)}) found for: {descriptor}')
+    return f'/dev/{dev_names[0]}'
+
+
+def repair_disk(descriptor: Text):
+    """Repair disk identified by descriptor."""
+    dev = get_disk(descriptor)
+    print(f'::: Repairing {dev}... :::')
+    proc = subprocess.run(['sudo', 'fsck_hfs', '-fy', dev], check=False)
+    if proc.returncode != 0:
+        abort(f'Disk check failed for: {dev}')
+
+
+def main():
+    """Parse the command line and perform disk checks."""
+    parser = argparse.ArgumentParser(description='Mac disk check.')
+    parser.add_argument('DISK', nargs='+', help='disk device or name')
+    args = parser.parse_args()
+    for descriptor in args.DISK:
+        repair_disk(descriptor)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        print('')
