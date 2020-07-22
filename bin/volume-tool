@@ -9,10 +9,10 @@ import time
 import atexit
 
 # Make pylint trust these location-sensitive imports.
-from lib import import_scriptbase   #pylint: disable=unused-import
-from scriptbase.argdeco import CLI  #pylint: disable=import-error
-from scriptbase import console      #pylint: disable=import-error
-from scriptbase import disk         #pylint: disable=import-error
+from lib import import_scriptbase   # noqa pylint: disable=unused-import
+from scriptbase.argdeco import CLI  # pylint: disable=import-error
+from scriptbase import console      # pylint: disable=import-error
+from scriptbase import disk         # pylint: disable=import-error
 
 
 class Constants:
