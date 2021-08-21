@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+set -e
+
+if [[ $UID != 0 ]]; then
+    echo "Please run this script as root by using sudo."
+    exit 1
+fi
+
+backup_volume=$(tmutil destinationinfo | awk '/Mount Point/{print $4}')
+if [[ -z $backup_volume ]]; then
+    echo "Unable to determine the backup volume."
+    exit 1
+fi
+
+backup_folder="$backup_volume/Backups.backupdb/$(scutil --get ComputerName)"
+if [[ ! -d $backup_folder ]]; then
+    echo "Backup folder '$backup_folder' does not exist."
+    exit 1
+fi
+
+if [[ $# < 1 ]]; then
+    echo "Usage: $(basename ${BASH_SOURCE[0]}) DATE_PATTERN ..."
+fi
+
+echo "Backup folder: $backup_folder"
+df -h $backup_volume
+
+for pattern in "$@"; do
+    for backup_subfolder in "$backup_folder/"$pattern; do
+        if [[ -d "$backup_subfolder" ]]; then
+            echo ":::$pattern:::"
+            time tmutil delete -p "$backup_subfolder"
+            df -h $backup_volume
+        else
+            echo "Skipping non-existent backup sub-folder: $backup_subfolder"
+        fi
+    done
+done
