@@ -29,7 +29,8 @@ df -h $backup_volume
 for pattern in "$@"; do
     for backup_subfolder in "$backup_folder/"$pattern; do
         if [[ -d "$backup_subfolder" ]]; then
-            echo ":::$pattern:::"
+            folder_name=$(basename "$backup_subfolder")
+            echo ":::$folder_name:::"
             time tmutil delete -p "$backup_subfolder"
             df -h $backup_volume
         else
