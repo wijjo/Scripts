@@ -1,0 +1,434 @@
+#!/usr/bin/env python3
+# Copyright 2021 Steven Cooper
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import os
+import sys
+import argparse
+import subprocess
+import plistlib
+import re
+import time
+from dataclasses import dataclass
+from typing import List, Optional, Union, Sequence, Dict
+
+
+@dataclass
+class Platform:
+    name: str
+    support: str
+    image_extension: str
+
+
+@dataclass
+class CompressionMethod:
+    name: str
+    compressor: str
+    expander: str
+    extension: str
+
+
+PLATFORMS: List[Platform] = [
+    Platform('darwin', 'full', 'dmg'),
+    Platform('linux', 'untested', 'img'),
+]
+
+COMPRESSION_METHODS: List[CompressionMethod] = [
+    CompressionMethod('gzip', 'gzip', 'gzcat', 'gz'),
+    CompressionMethod('xz', 'xz', 'xzcat', 'xz'),
+]
+COMPRESSION_NAMES: List[str] = [compression.name for compression in COMPRESSION_METHODS]
+COMPRESSION_EXTENSIONS: List[str] = [compression.extension for compression in COMPRESSION_METHODS]
+COMPRESSION_METHOD_BY_NAME: Dict[str, CompressionMethod] = {
+    method.name: method for method in COMPRESSION_METHODS
+}
+COMPRESSION_METHOD_BY_EXTENSION: Dict[str, CompressionMethod] = {
+    method.extension: method for method in COMPRESSION_METHODS
+}
+DEFAULT_COMPRESSION = 'gzip'
+
+NAME_REGEX = re.compile('^\w+$')
+
+
+def abort(message: str):
+    """
+    Display fatal error and quit.
+
+    :param message: message to display
+    """
+    sys.stderr.write(f'FATAL: {message}\n')
+    sys.exit(1)
+
+
+def heading(message: str):
+    """
+    Display heading message.
+
+    :param message: message to display
+    """
+    print('')
+    print(f'::: {message} :::')
+    print('')
+
+
+def find_executable(*names: str) -> Optional[str]:
+    """
+    Find an executable program in the shell PATH.
+
+    If multiple names are specified return the first one found in the path.
+
+    Return path to first name found in PATH.
+    """
+    env_path = os.environ['PATH']
+    for name in names:
+        path = find_in_path(env_path, name, executable=True)
+        if path:
+            return os.path.realpath(path)
+    return None
+
+
+# noinspection DuplicatedCode
+def find_in_path(path: str, name: str, executable: bool = False) -> Optional[str]:
+    """
+    Find a file in a shell-compatible path string.
+
+    Return path to name if found in path, or None if not found.  Require
+    executable if executable is True.
+    """
+    for directory in path.split(os.pathsep):
+        chk_path = os.path.join(directory, name)
+        if executable:
+            if sys.platform in ('cygwin', 'windows'):
+                for ext in ('', '.exe', '.bat', '.cmd', '.com'):
+                    if os.path.exists(chk_path + ext):
+                        return chk_path
+            elif os.path.exists(chk_path) and (os.stat(chk_path)[0] & 0o111) != 0:
+                return chk_path
+        elif os.path.exists(chk_path):
+            return chk_path
+    return None
+
+
+@dataclass
+class Disk:
+    device: str
+    size: int
+    partition_names: List[str]
+
+    def __post_init__(self):
+        self.size_gib = self.size / 1000000000
+        self.size_g = self.size / 1073741824
+
+
+def get_disks() -> List[Disk]:
+    """Get disk data."""
+    proc = subprocess.run(['diskutil', 'list', '-plist'],
+                          capture_output=True, check=False)
+    if proc.returncode != 0:
+        abort(f'Unable to get disk data.')
+    disks: List[Disk] = []
+    disks_data = plistlib.loads(proc.stdout)
+    for disk_item in disks_data['AllDisksAndPartitions']:
+        partitions = disk_item.get('Partitions', [])
+        volume_names = [part_item.get('VolumeName', '___') for part_item in partitions]
+        disks.append(Disk(f'/dev/r{disk_item["DeviceIdentifier"]}',
+                          disk_item['Size'],
+                          volume_names))
+    return disks
+
+
+def check_platform() -> Platform:
+    """
+    Check platform support and confirm if unsupported (experimental).
+
+    Does not return if platform isn't supported or if the user decides not to
+    continue on an unsupported platform.
+
+    :return: Platform object
+    """
+    for platform in PLATFORMS:
+        if platform.name == sys.platform:
+            if platform.support != 'full':
+                print(f'WARNING: Disk imaging support for {platform.name}'
+                      f' is considered "{platform.support}".')
+                confirm('Continue anyway?')
+            return platform
+    abort(f'The "{sys.platform}" platform is not supported.')
+
+
+def check_name(name: Optional[str], default_name: str) -> str:
+    """
+    Validate base image name.
+
+    :param name: base image name
+    :param default_name: default image name
+    :return: name
+    """
+    if name:
+        if not NAME_REGEX.match(name):
+            abort(f'Bad image base name "{name}".')
+    else:
+        name = default_name
+    return name
+
+
+def check_folder(folder: str) -> str:
+    """
+    Validate target folder.
+
+    :param folder: folder path
+    :return: absolute folder path
+    """
+    if not os.path.isdir(folder):
+        abort(f'Bad target folder "{folder}".')
+    return os.path.realpath(folder)
+
+
+def check_compression(method_name: str) -> CompressionMethod:
+    """
+    Validate named compression method.
+
+    :param method_name: compression method name
+    :return: CompressionMethod object
+    """
+    method = COMPRESSION_METHOD_BY_NAME.get(method_name)
+    if not method:
+        abort(f'Unknown compression method "{method_name}".')
+    return method
+
+
+def choose(prompt: str, choices: List[str]) -> int:
+    """
+    Prompt to choose from a list.
+
+    :param prompt: prompt to display before receiving input
+    :param choices: valid choices
+    :return: 0-n choice index
+    """
+    heading(f'{prompt} menu')
+    for idx, choice in enumerate(choices):
+        print(f'{idx + 1}) {choice}')
+    print('')
+    choice = -1
+    while choice < 1 or choice > len(choices):
+        try:
+            choice = int(input(f'{prompt} (1-{len(choices)})? '))
+        except ValueError:
+            choice = -1
+    return choice - 1
+
+
+def confirm(message: str):
+    print('')
+    print(message)
+    choice = input('Type "yes" to continue: ')
+    print('')
+    if choice != 'yes':
+        abort('Cancel.')
+
+
+def choose_disk(label: str, disks: List[Disk]) -> Disk:
+    """
+    Prompt to choose a source or target disk, depending on operation direction.
+
+    :param label: label used to identify disk type
+    :param disks: available disks data
+    :return: chosen disk
+    """
+    disk_strings: List[str] = []
+    for disk in disks:
+        disk_strings.append(
+            f'{disk.device} ({disk.size_gib:.1f} GiB: {"|".join(disk.partition_names)})')
+    choice = choose(f'{label} device', disk_strings)
+    return disks[choice]
+
+
+@dataclass
+class ImageFile:
+    full_path: str
+    compression_method: CompressionMethod
+
+    @property
+    def name(self) -> str:
+        return os.path.basename(self.full_path)
+
+
+def choose_image_file(name: str, folder: str, platform: Platform) -> ImageFile:
+    """
+    Prompt to choose a source image file.
+
+    :param name: base image name
+    :param folder: folder containing image files
+    :param platform: platform data
+    :return: chosen image file
+    """
+    file_name_regex = re.compile(fr'{name}_'
+                                 fr'(\d\d\d\d\d\d\d\d_\d\d\d\d\d\d)\.'
+                                 fr'{platform.image_extension}\.'
+                                 fr'({"|".join(COMPRESSION_EXTENSIONS)})')
+    image_files: List[ImageFile] = []
+    image_file_names: List[str] = []
+    for file_name in os.listdir(folder):
+        print(file_name, file_name_regex)
+        match = file_name_regex.match(file_name)
+        if match:
+            timestamp, extension = match.groups()
+            full_path = os.path.join(folder, file_name)
+            method = COMPRESSION_METHOD_BY_EXTENSION[extension]
+            image_files.append(ImageFile(full_path, method))
+            image_file_names.append(file_name)
+    choice = choose('Source image file', image_file_names)
+    return image_files[choice]
+
+
+def perform_io(source_command: str,
+               sink_command: str,
+               success_commands: Union[str, Sequence[str]] = None,
+               failure_commands: Union[str, Sequence[str]] = None,
+               size: int = None):
+    if not isinstance(success_commands, (list, tuple)):
+        success_commands = [] if success_commands is None else [success_commands]
+    if not isinstance(failure_commands, (list, tuple)):
+        failure_commands = [] if failure_commands is None else [failure_commands]
+    command_parts: List[str] = [source_command]
+    pv_path = find_executable('pv')
+    if pv_path:
+        if size and size > 0:
+            command_parts.append(f'pv -s {size} -rebt')
+        else:
+            command_parts.append(f'pv -rbt')
+    else:
+        install_example = 'brew install pv' if sys.platform == 'darwin' else 'apt install pv'
+        print(f'Install pv, e.g. "{install_example}", for more useful progress output.')
+    command_parts.append(sink_command)
+    command = ' | '.join(command_parts)
+    print(f'command: {command}')
+    confirm(f'Continue with operation?')
+    # Use sudo with echo to force any password password prompt to happen before
+    # piped command output starts.
+    os.system('sudo echo "Copying {disk.device} to {target}..."')
+    success = False
+    try:
+        success = os.system(command) == 0
+        if success:
+            for success_command in success_commands:
+                print(f'post-success: {success_command}')
+                os.system(success_command)
+    finally:
+        if not success:
+            for failure_command in failure_commands:
+                print(f'post-failure: {failure_command}')
+                os.system(failure_command)
+
+
+def backup(name: str,
+           folder: str,
+           platform: Platform,
+           compression_method: CompressionMethod,
+           disks: List[Disk]):
+    """
+    Perform image backup.
+
+    Assumes fully-validated parameters.
+
+    :param name: base image name
+    :param folder: target folder path
+    :param platform: platform data
+    :param compression_method: compression method data
+    :param disks: available disks data
+    """
+    disk = choose_disk('Source', disks)
+    timestamp = time.strftime('%Y%m%d_%H%M%S')
+    target_name = f'{name}_{timestamp}.{platform.image_extension}.{compression_method.extension}'
+    target = os.path.join(folder, target_name)
+    target_tmp = f'{target}.tmp'
+    heading(f'Image backup from {disk.device} to {target_name}')
+    perform_io(source_command=f'sudo dd bs=4M if={disk.device}',
+               sink_command=f'{compression_method.compressor} - > "{target_tmp}"',
+               success_commands=[f'sudo chown {os.environ["USER"]} "{target_tmp}"',
+                                 f'mv "{target_tmp}" "{target}"'],
+               failure_commands=f'sudo rm -fv "{target_tmp}"',
+               size=disk.size)
+
+
+def restore(name: str,
+            folder: str,
+            platform: Platform,
+            disks: List[Disk]):
+    """
+    Perform image restore.
+
+    Assumes fully-validated parameters.
+
+    :param name: base image name
+    :param folder: target folder path
+    :param platform: platform data
+    :param disks: available disks data
+    """
+    disk = choose_disk('Target', disks)
+    image_file = choose_image_file(name, folder, platform)
+    heading(f'Image restore from {image_file.name} to {disk.device}')
+    perform_io(source_command=f'{image_file.compression_method.expander} "{image_file.full_path}"',
+               sink_command=f'sudo dd bs=4M of="{disk.device}"',
+               size=disk.size)
+
+
+def main():
+    """Parse the command line and perform disk checks."""
+    platform = check_platform()
+
+    parser = argparse.ArgumentParser(description='Disk imaging tool.')
+
+    group = parser.add_subparsers(dest='SUBCOMMAND', title='subcommands', required=True)
+
+    backup_parser = group.add_parser('backup', description='back up SD card to local file')
+    backup_parser.add_argument('-n',
+                               dest='NAME',
+                               help='image base name (default: image folder name)')
+    backup_parser.add_argument('-f',
+                               dest='IMAGE_FOLDER',
+                               help='image folder (default: ".")',
+                               default=os.getcwd())
+    backup_parser.add_argument('-c', '--compression',
+                               dest='COMPRESSION',
+                               help=f'compression type (default: {DEFAULT_COMPRESSION}',
+                               default=DEFAULT_COMPRESSION,
+                               choices=COMPRESSION_NAMES)
+
+    restore_parser = group.add_parser('restore', description='restore SD card from local file')
+    restore_parser.add_argument('-n',
+                                dest='NAME',
+                                help='image base name (default: image folder name)')
+    restore_parser.add_argument('-f',
+                                dest='IMAGE_FOLDER',
+                                help='output folder (default: ".")',
+                                default=os.getcwd())
+
+    args = parser.parse_args()
+
+    folder = check_folder(args.IMAGE_FOLDER)
+    name = check_name(args.NAME, os.path.basename(folder))
+    disks = get_disks()
+    if args.SUBCOMMAND == 'backup':
+        method_name = check_compression(args.COMPRESSION)
+        backup(name, folder, platform, method_name, disks)
+    elif args.SUBCOMMAND == 'restore':
+        restore(name, folder, platform, disks)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        print('')
