@@ -280,7 +280,6 @@ def choose_image_file(name: str, folder: str, platform: Platform) -> ImageFile:
     image_files: List[ImageFile] = []
     image_file_names: List[str] = []
     for file_name in os.listdir(folder):
-        print(file_name, file_name_regex)
         match = file_name_regex.match(file_name)
         if match:
             timestamp, extension = match.groups()
