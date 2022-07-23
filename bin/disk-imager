@@ -316,7 +316,7 @@ def perform_io(source_command: str,
     confirm(f'Continue with operation?')
     # Use sudo with echo to force any password password prompt to happen before
     # piped command output starts.
-    os.system('sudo echo "Copying {disk.device} to {target}..."')
+    os.system(f'sudo echo "Copying {disk.device} to {target}..."')
     success = False
     try:
         success = os.system(command) == 0
