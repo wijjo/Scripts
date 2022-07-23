@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Copyright 2016-17 Steven Cooper
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,28 +67,28 @@ def main():
             usage()
     try:
         band_size = int(band_size_arg)
+        cmd_args = [
+            'hdiutil', 'create',
+            '-layout', 'GPTSPUD',
+            '-size', size_arg,
+            '-type', 'SPARSEBUNDLE',
+            '-nospotlight',
+            '-volname', name_arg,
+            '-fs', 'Journaled HFS+',
+            '-imagekey', 'sparse-band-size=%d' % (band_size * 2048),
+        ]
+        kwargs = dict(bufsize=0)
+        if ebits:
+            cmd_args.extend(['-encryption', 'AES-%d' % ebits, '-stdinpass'])
+            kwargs['stdin'] = PIPE
+            password = get_password()
+        else:
+            password = None
+        cmd_args.append('%s.sparsebundle' % name_arg)
+        proc = Popen(cmd_args, **kwargs)
+        proc.communicate(password)
     except ValueError:
         usage()
-    cmd_args = [
-        'hdiutil', 'create',
-        '-layout', 'GPTSPUD',
-        '-size', size_arg,
-        '-type', 'SPARSEBUNDLE',
-        '-nospotlight',
-        '-volname', name_arg,
-        '-fs', 'Journaled HFS+',
-        '-imagekey', 'sparse-band-size=%d' % (band_size * 2048),
-    ]
-    kwargs = dict(bufsize=0)
-    if ebits:
-        cmd_args.extend(['-encryption', 'AES-%d' % ebits, '-stdinpass'])
-        kwargs['stdin'] = PIPE
-        password = get_password()
-    else:
-        password = None
-    cmd_args.append('%s.sparsebundle' % name_arg)
-    proc = Popen(cmd_args, **kwargs)
-    proc.communicate(password)
 
 
 if __name__ == '__main__':

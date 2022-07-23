@@ -1,3 +1,0 @@
-[submodule "ext/python_misc"]
-	path = ext/scriptbase
-	url = git@github.com:wijjo/python_misc.git

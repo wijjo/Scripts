@@ -19,12 +19,12 @@ if [[ ! -d $backup_folder ]]; then
     exit 1
 fi
 
-if [[ $# < 1 ]]; then
-    echo "Usage: $(basename ${BASH_SOURCE[0]}) DATE_PATTERN ..."
+if [[ $# -lt 1 ]]; then
+    echo "Usage: $(basename "${BASH_SOURCE[0]}" ) DATE_PATTERN ..."
 fi
 
 echo "Backup folder: $backup_folder"
-df -h $backup_volume
+df -h "$backup_volume"
 
 for pattern in "$@"; do
     for backup_subfolder in "$backup_folder/"$pattern; do
@@ -32,7 +32,7 @@ for pattern in "$@"; do
             folder_name=$(basename "$backup_subfolder")
             echo ":::$folder_name:::"
             time tmutil delete -p "$backup_subfolder"
-            df -h $backup_volume
+            df -h "$backup_volume"
         else
             echo "Skipping non-existent backup sub-folder: $backup_subfolder"
         fi

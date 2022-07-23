@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Copyright 2017 Steven Cooper
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@ import sys
 import os
 import re
 from argparse import ArgumentParser
+from typing import Optional
 
 R_DOCSTRING_BEGIN = re.compile(r'^\s*(\'\'\'|\"\"\")(.*)\s*$')
 R_DOCSTRING_END = re.compile(r'^\s*(.*)(\'\'\'|\"\"\")\s*(.*)\s*$')
@@ -45,7 +46,7 @@ def count_lines(stream):
             else:
                 if not R_COMMENT_OR_EMPTY.match(line):
                     code += 1
-    return (code, total)
+    return code, total
 
 
 class Results(object):
@@ -57,7 +58,7 @@ class Results(object):
     class Result(object):
         """Metrics for one source file."""
 
-        def __init__(self, path, code, total):
+        def __init__(self, path: str, code: Optional[int], total: Optional[int]):
             """Result constructor."""
             self.path = path
             self.code = code
@@ -82,7 +83,7 @@ class Results(object):
         def strings(self):
             """Return result list as strings."""
             if self.code is None:
-                return (self.path, '*bad path*', '', '')
+                return self.path, '*bad path*', '', ''
             return [self.path, str(self.code), str(self.total),
                     Results.density_format % self.density]
 
@@ -108,7 +109,8 @@ class Results(object):
 
     def format_results(self, order_by_column):
         """Format the results and yield lines."""
-        key_func = lambda result: getattr(result, order_by_column)
+        def key_func(obj):
+            return getattr(obj, order_by_column)
         reverse = order_by_column != 'path'
         self.results.sort(key=key_func, reverse=reverse)
         row_format = '%%-%ds  %%%ds  %%%ds  %%%ds' % tuple(self.widths)
@@ -140,7 +142,7 @@ def analyze(paths, order_by):
 
 
 def parse_order_by_spec(input_str, default_str):
-    "Parse an order-by specification."
+    """Parse an order-by specification."""
     input_set = set(input_str)
     valid_set = set(Results.valid_order_by_specs.keys())
     final_set = input_set.intersection(valid_set)
@@ -152,7 +154,7 @@ def parse_order_by_spec(input_str, default_str):
         bad_str = ''.join(sorted(bad_set))
         sys.stderr.write('ERROR: Bad order-by specification letter(s): %s%s'
                          % (bad_str, os.linesep))
-    return [Results.valid_order_by_specs[l] for l in sorted(final_set)]
+    return [Results.valid_order_by_specs[col] for col in sorted(final_set)]
 
 
 def main():

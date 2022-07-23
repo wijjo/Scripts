@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Copyright 2016-17 Steven Cooper
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,16 +15,33 @@
 
 """Perform various image manipulations using ImageMagick."""
 
+import argparse
 import os
 import glob
 import re
-
-#pylint: disable=unused-import,import-error
-from lib import import_scriptbase
-from scriptbase import cli, console, command
+import sys
+from subprocess import run
+from typing import Optional, Sequence
 
 # Matches identity output without the file name at the front.
 RE_IDENTIFY = re.compile(r'(\w+)\s+(\d+)x(\d+)\s+(\d+)x(\d+)[+](\d+)[+](\d+)\s+.*', re.IGNORECASE)
+
+
+# noinspection DuplicatedCode
+def info(message: str):
+    sys.stdout.write(f'{message}{os.linesep}')
+
+
+# noinspection DuplicatedCode
+def error(message: str):
+    sys.stderr.write(f'ERROR: {message}{os.linesep}')
+
+
+# noinspection DuplicatedCode
+def abort(message: str):
+    sys.stderr.write(f'FATAL: {message}{os.linesep}')
+    sys.exit(1)
+
 
 class Chopper(object):
     """Image chopper."""
@@ -41,24 +58,22 @@ class Chopper(object):
     def identify(cls, path):
         """Identify an image."""
         width = height = None
-        with command.Command('identify', path) as cmd:
-            for line in cmd:
-                matched = RE_IDENTIFY.search(line)
-                if not matched is None:
-                    width = int(matched.group(2))
-                    height = int(matched.group(3))
-            if width is None:
-                raise Exception('Unable to indentify image file: %s' % path)
-        return (width, height)
+        proc = run(['identify', path], capture_output=True, check=True, encoding='utf-8')
+        for line in proc.stdout.split(os.linesep):
+            matched = RE_IDENTIFY.search(line)
+            if matched is not None:
+                width = int(matched.group(2))
+                height = int(matched.group(3))
+        if width is None:
+            raise Exception('Unable to indentify image file: %s' % path)
+        return width, height
 
-
-    def chop(self, path, base=None):                            #pylint: disable=too-many-locals
+    def chop(self, path, base=None):
         """Chop an image."""
-        (image_width, image_height) = self.identify(path)
+        image_width, image_height = self.identify(path)
         width = image_width / self.xgrid
         height = image_height / self.ygrid
         index = 0
-        #pylint: disable=invalid-name
         for ygrid in range(self.ygrid):
             y = self.yoffset + (height * ygrid)
             for xgrid in range(self.xgrid):
@@ -70,80 +85,88 @@ class Chopper(object):
                 else:
                     name = base
                 path_out = '{name}-{index}.png'.format(name=name, index=index)
-                console.info(path_out)
+                info(path_out)
                 cmd = 'convert {path} -crop {geometry} {path_out}'.format(
                     path=path, geometry=geometry, path_out=path_out)
                 if self.dry_run:
                     print(cmd)
                 else:
                     if os.system(cmd) != 0:
-                        console.abort('Crop operation failed.')
+                        abort('Crop operation failed.')
 
-@cli.Command(
-    description='Chop up one or more images based on a grid specification.',
-    args=[
-        cli.Integer('XGRID', 'number of X grid elements'),
-        cli.Integer('YGRID', 'number of Y grid elements'),
-        cli.String('INPUT_IMAGE', 'image file path or wildcard pattern', nargs='+'),
-        cli.Integer('XOFFSET', 'X offset', '-x', '--x-offset', default=0),
-        cli.Integer('YOFFSET', 'Y offset', '-y', '--y-offset', default=0),
-        cli.String('OUTPUT_BASE', 'custom base name for output files', '-o', '--output-base'),
-    ],
-)
-def chop(runner):
-    """Command to chop an image."""
-    chopper = Chopper(runner.arg.XGRID,
-                      runner.arg.YGRID,
-                      runner.arg.XOFFSET,
-                      runner.arg.YOFFSET,
-                      runner.arg.DRY_RUN)
-    for arg in runner.arg.INPUT_IMAGE:
-        for path in glob.glob(os.path.expanduser(os.path.expandvars(arg))):
-            if os.path.exists(path):
-                with command.Command('identify', arg) as cmd:
-                    for line in cmd:
-                        matched = RE_IDENTIFY.search(line)
-                        if not matched is None:
-                            chopper.chop(path, base=runner.arg.OUTPUT_BASE)
-                        else:
-                            console.error(line)
 
-@cli.Command(
-    name='ios-icons',
-    description='''\
-Create iOS icon set from source image(s).
-Uses the input file base name as the output file base name.''',
-    args=[
-        cli.String('INPUT_IMAGE', 'image file path or wildcard pattern', nargs='+'),
-        cli.String('OUTPUT_BASE', 'custom base name for output files', '-o', '--output-base'),
-    ],
-)
-def ios_icons(runner):
-    """Command to convert to iOS icons."""
-    for arg in runner.arg.INPUT_IMAGE:
-        for path in glob.glob(os.path.expanduser(os.path.expandvars(arg))):
+def chop(input_images: Sequence[str],
+         xgrid: int,
+         ygrid: int,
+         xoffset: Optional[int],
+         yoffset: Optional[int],
+         output_base: Optional[str],
+         dry_run: bool,
+         ):
+    """
+    Command to chop an image.
+
+    :param input_images: input images
+    :param xgrid: x grid size
+    :param ygrid: y grid size
+    :param xoffset: optional x offset
+    :param yoffset: optional y offset
+    :param output_base: optional custom base output name
+    :param dry_run: avoid destructive changes if True
+    """
+    chopper = Chopper(xgrid,
+                      ygrid,
+                      xoffset,
+                      yoffset,
+                      dry_run)
+    for input_image in input_images:
+        for path in glob.glob(os.path.expanduser(os.path.expandvars(input_image))):
             if os.path.exists(path):
-                if runner.arg.OUTPUT_BASE is None:
+                proc = run(['identify', input_image],
+                           capture_output=True, check=True, encoding='utf-8')
+                for line in proc.stdout.split(os.linesep):
+                    matched = RE_IDENTIFY.search(line)
+                    if matched is not None:
+                        chopper.chop(path, base=output_base)
+                    else:
+                        error(line)
+
+
+def ios_icons(input_images: Sequence[str],
+              output_base: Optional[str],
+              dry_run: bool,
+              ):
+    """
+    Command to convert to iOS icons.
+
+    :param input_images: input images
+    :param output_base: optional custom base output name
+    :param dry_run: avoid destructive changes if True
+    """
+    for input_image in input_images:
+        for path in glob.glob(os.path.expanduser(os.path.expandvars(input_image))):
+            if os.path.exists(path):
+                if output_base is None:
                     basename = os.path.splitext(os.path.basename(path))[0]
                 else:
-                    basename = runner.arg.OUTPUT_BASE
-                resize_ios_icon(path, basename, 29, runner.arg.DRY_RUN,
+                    basename = output_base
+                resize_ios_icon(path, basename, 29, dry_run,
                                 'ipad-settings-1x')
-                resize_ios_icon(path, basename, 40, runner.arg.DRY_RUN,
+                resize_ios_icon(path, basename, 40, dry_run,
                                 'ipad-spotlight-1x')
-                resize_ios_icon(path, basename, 58, runner.arg.DRY_RUN,
+                resize_ios_icon(path, basename, 58, dry_run,
                                 'iphone-settings-2x', 'ipad-settings-2x')
-                resize_ios_icon(path, basename, 76, runner.arg.DRY_RUN,
+                resize_ios_icon(path, basename, 76, dry_run,
                                 'ipad-app-1x')
-                resize_ios_icon(path, basename, 80, runner.arg.DRY_RUN,
+                resize_ios_icon(path, basename, 80, dry_run,
                                 'iphone-spotlight-2x', 'ipad-spotlight-2x')
-                resize_ios_icon(path, basename, 87, runner.arg.DRY_RUN,
+                resize_ios_icon(path, basename, 87, dry_run,
                                 'iphone-settings-3x')
-                resize_ios_icon(path, basename, 120, runner.arg.DRY_RUN,
+                resize_ios_icon(path, basename, 120, dry_run,
                                 'iphone-spotlight-3x', 'iphone-app-2x')
-                resize_ios_icon(path, basename, 152, runner.arg.DRY_RUN,
+                resize_ios_icon(path, basename, 152, dry_run,
                                 'ipad-app-2x')
-                resize_ios_icon(path, basename, 180, runner.arg.DRY_RUN,
+                resize_ios_icon(path, basename, 180, dry_run,
                                 'iphone-app-3x')
 
 
@@ -161,15 +184,48 @@ def resize_ios_icon(path, basename, pixels, dry_run, *copies):
             os.system(resize_command)
 
 
-@cli.Main(
-    description='Assorted image file operations.',
-    support_verbose=True,
-    support_dry_run=True,
-)
-def main(runner):
+def main():
     """Main function."""
-    console.set_verbose(runner.arg.VERBOSE)
+    parser = argparse.ArgumentParser(description='Assorted image file operations.')
+    parser.add_argument('-n', '--dry-run', dest='DRY_RUN', help='enable dry run')
+    command_parsers = parser.add_subparsers(dest='COMMAND', help='', title='sub-commands')
+    chop_parser = command_parsers.add_parser(
+        'chop',
+        description='Chop up one or more images based on a grid specification.',
+    )
+    chop_parser.add_argument(dest='XGRID', help='number of X grid elements')
+    chop_parser.add_argument(dest='YGRID', help='number of Y grid elements')
+    chop_parser.add_argument(dest='INPUT_IMAGE', nargs='+',
+                             help='image file path or wildcard pattern')
+    chop_parser.add_argument('-x', '--x-offset', dest='XOFFSET', type=int, default=0,
+                             help='X offset')
+    chop_parser.add_argument('-y', '--y-offset', dest='YOFFSET', type=int, default=0,
+                             help='Y offset')
+    chop_parser.add_argument('-o', '--output-base', dest='OUTPUT_BASE',
+                             help='custom base name for output files')
+    ios_icons_parser = command_parsers.add_parser(
+        'ios-icons',
+        description='Create iOS icon set from source image(s).',
+        epilog='Uses the input file base name as the output file base name.',
+    )
+    ios_icons_parser.add_argument(dest='INPUT_IMAGE', nargs='+',
+                                  help='image file path or wildcard pattern'),
+    ios_icons_parser.add_argument('-o', '--output-base', dest='OUTPUT_BASE',
+                                  help='custom base name for output files'),
+    args = parser.parse_args()
+    if args.COMMAND == 'chop':
+        chop(args.INPUT_IMAGE,
+             args.XGRID,
+             args.YGRID,
+             args.XOFFSET,
+             args.YOFFSET,
+             args.OUTPUT_BASE,
+             args.DRY_RUN)
+    elif args.COMMAND == 'ios-icons':
+        ios_icons(args.INPUT_IMAGE,
+                  args.OUTPUT_BASE,
+                  args.DRY_RUN)
 
 
 if __name__ == '__main__':
-    cli.main()
+    main()

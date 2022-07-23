@@ -2,17 +2,335 @@
 
 """External drive backup."""
 
-import sys
-import os
-import subprocess
-import time
+import argparse
 import atexit
+import inspect
+import os
+import re
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from decimal import Decimal
+from typing import Optional
 
-# Make pylint trust these location-sensitive imports.
-from lib import import_scriptbase   # noqa pylint: disable=unused-import
-from scriptbase.argdeco import CLI  # pylint: disable=import-error
-from scriptbase import console      # pylint: disable=import-error
-from scriptbase import disk         # pylint: disable=import-error
+RE_MOUNT = re.compile(r'^(/[a-z\d_/]+) on (/[a-z\d_/ ]+)( [(][^)]*[)])?', re.IGNORECASE)
+
+
+def object_repr(instance, exclude=None):
+    """Format class instance repr() string."""
+    exclude = exclude or []
+
+    def _format_value(value):
+        if isinstance(value, str):
+            return "'{}'".format(value)
+        if inspect.isfunction(value):
+            return '{}()'.format(value.__name__)
+        return repr(value)
+
+    return '{}({})'.format(
+        instance.__class__.__name__,
+        ', '.join(['{}={}'.format(k, _format_value(getattr(instance, k)))
+                   for k in sorted(instance.__dict__.keys())
+                   if not k.startswith('_') and k not in exclude]))
+
+
+UNIT_LABELS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB']
+
+
+@dataclass
+class DiskVolume:
+    """Data for a disk volume."""
+    volume_dev: str
+    disk_dev: str
+    raw_disk_dev: str
+    filesystem: str
+    size: int
+    name: str
+    uuid: str
+    mountpoint: str
+
+    @classmethod
+    def format_disk_size(cls, size, places=2):
+        """Return adjusted size string with unit."""
+        threshold = 1000 ** (len(UNIT_LABELS) - 1)
+        for i in range(len(UNIT_LABELS) - 1, 0, -1):
+            if size >= threshold:
+                value_str = str(Decimal(size) / threshold)
+                dec_pos = value_str.find('.')
+                if dec_pos == -1:
+                    return '{}.00 {}'.format(value_str, UNIT_LABELS[i])
+                value_places = len(value_str) - dec_pos - 1
+                if value_places < places:
+                    zeros = '0' * (places - value_places)
+                    return '{}{} {}'.format(value_str, zeros, UNIT_LABELS[i])
+                if value_places > places:
+                    return '{} {}'.format(value_str[:(places - value_places)], UNIT_LABELS[i])
+                return value_str, UNIT_LABELS[i]
+            threshold //= 1000
+        return '{} {}'.format(size, UNIT_LABELS[0])
+
+    def short_summary(self):
+        """Short summary string to for user consumption."""
+        return 'label: {label}, disk: {disk}, volume: {volume}, size: {size}'.format(
+            label=self.name,
+            disk=self.disk_dev,
+            volume=self.volume_dev,
+            size=self.format_disk_size(self.size),
+        )
+
+
+FILESYSTEM_NAME_TRANSLATIONS_1 = {
+    'Apple_APFS': 'APFS',
+    'Apple_HFS': 'HFS',
+    'EFI': 'EFI',
+    'Windows_FAT_32': 'FAT32',
+}
+
+FILESYSTEM_NAME_TRANSLATIONS_2 = {
+    'Windows_NTFS': 'NTFS',
+    'UFSD_NTFS': 'NTFS',
+    'Journaled HFS+': 'HFS+',
+}
+
+
+# noinspection DuplicatedCode
+def info(message: str):
+    sys.stdout.write(f'{message}{os.linesep}')
+
+
+# noinspection DuplicatedCode
+def error(message: str):
+    sys.stderr.write(f'ERROR: {message}{os.linesep}')
+
+
+# noinspection DuplicatedCode
+def abort(message: str):
+    sys.stderr.write(f'FATAL: {message}{os.linesep}')
+    sys.exit(1)
+
+
+def volumes_list():
+    """Provide data for currently visible volumes."""
+    if sys.platform != 'darwin':
+        abort('Currently, volumes_list() is only implemented for MacOS')
+    import plistlib
+    volumes = []
+    proc = subprocess.run(['diskutil', 'list', '-plist', 'physical'],
+                          capture_output=True, check=True)
+    list_data = plistlib.loads(proc.stdout)
+    for disk_or_partition in list_data['AllDisksAndPartitions']:
+        for volume in disk_or_partition.get('Partitions', []):
+            # Assume that "useful" user volumes have UUIDs.
+            uuid = volume.get('VolumeUUID')
+            if uuid:
+                filesystem = FILESYSTEM_NAME_TRANSLATIONS_1.get(volume.get('Content'))
+                if not filesystem:
+                    proc2 = subprocess.run(['diskutil', 'info', '-plist', uuid],
+                                           capture_output=True, check=True)
+                    info_data = plistlib.loads(proc2.stdout)
+                    filesystem = info_data['FilesystemName']
+                    if filesystem in FILESYSTEM_NAME_TRANSLATIONS_2:
+                        filesystem = FILESYSTEM_NAME_TRANSLATIONS_2[filesystem]
+                volumes.append(DiskVolume(
+                    '/dev/{}'.format(volume.get('DeviceIdentifier')),
+                    '/dev/{}'.format(disk_or_partition['DeviceIdentifier']),
+                    '/dev/r{}'.format(disk_or_partition['DeviceIdentifier']),
+                    filesystem,
+                    int(volume.get('Size')),
+                    volume.get('VolumeName', '(unnamed)'),
+                    uuid,
+                    volume.get('MountPoint'),
+                ))
+    return volumes
+
+
+def volume_unmount(volume):
+    """Unmount a volume based on a mountpoint."""
+    if sys.platform != 'darwin':
+        abort('Currently, volume_unmount() is only implemented for MacOS')
+    subprocess.run(['diskutil', 'unmount', volume.mountpoint], check=True)
+
+
+def volumes_for_identifier(identifier):
+    """Find volume by volume name, mountpoint, UUID, or device name."""
+    return [
+        volume
+        for volume in volumes_list()
+        if identifier in [
+            volume.name,
+            volume.mountpoint,
+            volume.uuid,
+            volume.disk_dev,
+        ]
+    ]
+
+
+def volume_for_identifier(identifier):
+    """Find exactly one volume by identifier (see volumes_for_identifier())."""
+    volumes = volumes_for_identifier(identifier)
+    if not volumes:
+        abort('No volume "{}" was found.'.format(identifier))
+    if len(volumes) != 1:
+        abort('There are {} volumes for "{}".'.format(len(volumes), identifier))
+    return volumes[0]
+
+
+def find_executable(*names):
+    """
+    Find an executable program in the shell PATH.
+
+    If multiple names are specified return the first one found in the path.
+
+    Return path to first name found in PATH.
+    """
+    env_path = os.environ['PATH']
+    for name in names:
+        path = find_in_path(env_path, name, executable=True)
+        if path:
+            return os.path.realpath(path)
+    return None
+
+
+def find_in_path(path, name, executable=False):
+    """
+    Find a file in a shell-compatible path string.
+
+    Return path to name if found in path, or None if not found.  Require
+    executable if executable is True.
+    """
+    for directory in path.split(os.pathsep):
+        chk_path = os.path.join(directory, name)
+        if executable:
+            if sys.platform in ('cygwin', 'windows'):
+                for ext in ('', '.exe', '.bat', '.cmd', '.com'):
+                    if os.path.exists(chk_path + ext):
+                        return chk_path
+            elif os.path.exists(chk_path) and (os.stat(chk_path)[0] & 0o111) != 0:
+                return chk_path
+        elif os.path.exists(chk_path):
+            return chk_path
+    return None
+
+
+class Compressor:
+    """Compressor data."""
+
+    def __init__(self, name, uncompress_cmd, *compress_cmds):
+        self.name = name
+        self.uncompress_cmd = uncompress_cmd
+        self.compress_cmds = compress_cmds
+
+    def get_compress_command(self):
+        """Check for and return compress command."""
+        progs = []
+        cmd = None
+        for compress_cmd in self.compress_cmds:
+            prog = compress_cmd.split()[0]
+            if find_executable(prog):
+                cmd = compress_cmd
+                break
+            progs.append(prog)
+        else:
+            abort('Unable to find {} compression program: {}'.format(self.name, ' '.join(progs)))
+        return cmd
+
+    def get_expand_command(self):
+        """Check for and return expansion command."""
+        prog = self.uncompress_cmd.split()[0]
+        if not find_executable(prog):
+            abort('Unable to find {} expansion program: {}'.format(self.name, prog))
+        return self.uncompress_cmd
+
+
+class Compressors:
+    """Access compression/expansion commands."""
+
+    compressors = [
+        Compressor('gzip', 'gzcat', 'pigz -c -f -', 'gzip -c -f -'),
+        Compressor('xz', 'xzcat', 'xz -c -T0 -f -'),
+    ]
+
+    @classmethod
+    def get_compressor(cls, name):
+        """Return an appropriate compressor, if available."""
+        compressor = None
+        for check_compressor in cls.compressors:
+            if check_compressor.name == name:
+                compressor = check_compressor
+                break
+        else:
+            abort('No {} compressor found.'.format(name))
+        return compressor
+
+    @classmethod
+    def get_compress_command(cls, name):
+        """Return compression command, if available."""
+        compressor = cls.get_compressor(name)
+        return compressor.get_compress_command()
+
+    @classmethod
+    def get_expand_command(cls, name):
+        """Return expansion command, if available."""
+        compressor = cls.get_compressor(name)
+        return compressor.get_expand_command()
+
+
+class DictObject(dict):
+    """Dictionary with read/write element access as attributes."""
+
+    def __getattr__(self, name):
+        """Read access to elements as attributes."""
+        return self.get(name, None)
+
+    def __setattr__(self, name, value):
+        """Write access to elements as attributes."""
+        self[name] = value
+
+    def format(self, template, *args, **kwargs):
+        """Format string using members and arguments."""
+        kwargs2 = {}
+        kwargs2.update(self, **kwargs)
+        return template.format(*args, **kwargs2)
+
+
+def backup_device(device_path, output_path, compression=None):
+    """Copy input device to gzip-compressed output file."""
+    ctx = DictObject(**locals())
+    if compression:
+        ctx.compress_cmd = Compressors.get_compress_command(compression)
+        ctx.compress_prog = ctx.compress_cmd.split()[0]
+        cmd = 'sudo dd if={device_path} bs=1M | {compress_cmd} > "{output_path}"'
+        msg = 'Reading device with dd and writing image with {compress_prog}.'
+    else:
+        cmd = 'sudo dd if={device_path} of="{output_path}" bs=1M'
+        msg = 'Reading device and writing image with dd.'
+    info(ctx.format(msg))
+    info('Press CTRL-T for status.')
+    cmd = ctx.format(cmd)
+    info(cmd)
+    ctx.retcode = os.system(cmd)
+    if ctx.retcode != 0:
+        abort(ctx.format('Image restore command failed with return code {retcode}.'))
+
+
+def restore_device(device_path, input_path, compression=None):
+    """Uncompress input file and copy to output device."""
+    ctx = DictObject(**locals())
+    if compression:
+        ctx.expand_cmd = Compressors.get_expand_command(compression)
+        msg = ('Uncompressing image file with {} and writing to device with dd.'
+               .format(ctx.expand_cmd))
+        cmd = ctx.format('{expand_cmd} "{input_path}" | sudo dd of={device_path} bs=64K')
+    else:
+        msg = 'Reading from image file and writing to device with dd.'
+        cmd = ctx.format('sudo dd if="{input_path}" of={device_path} bs=1M')
+    info(msg)
+    info('Press CTRL-T for status.')
+    info(cmd)
+    ctx.retcode = os.system(cmd)
+    if ctx.retcode != 0:
+        abort(ctx.format('Image restore command failed with return code {retcode}.'))
 
 
 class Constants:
@@ -39,28 +357,27 @@ def get_volume(identifier, mount_state):
     """
     Get volume based on name, device, UUID, or mountpoint, plus mount status.
 
-        mount_state:
-            0   don't care
-            1   require mounted
-            2   require unmounted
-            3   unmount if mounted
+    mount_state:
+        0   don't care
+        1   require mounted
+        2   require unmounted
+        3   unmount if mounted
     """
-    volume = disk.volume_for_identifier(identifier)
+    volume = volume_for_identifier(identifier)
     if volume:
         if mount_state == 1:
             # Require mounted.
             if not volume.mountpoint:
-                console.abort('Volume for "{}" is not mounted.'.format(identifier))
+                abort('Volume for "{}" is not mounted.'.format(identifier))
         elif mount_state == 2:
             # Require unmounted.
             if volume.mountpoint:
-                console.abort('Volume for "{}" is mounted as "{}".'
-                              .format(identifier, volume.mountpoint))
+                abort('Volume for "{}" is mounted as "{}".'.format(identifier, volume.mountpoint))
         elif mount_state == 3:
             # Unmount as needed.
             if volume.mountpoint:
-                console.info('Unmounting: {}'.format(volume.mountpoint))
-                disk.volume_unmount(volume)
+                info('Unmounting: {}'.format(volume.mountpoint))
+                volume_unmount(volume)
     return volume
 
 
@@ -69,132 +386,149 @@ def at_exit():
     for file_to_delete in Cleanup.files_to_delete:
         if os.path.exists(file_to_delete):
             try:
-                console.info('Removing partial file: {}'.format(file_to_delete))
+                info('Removing partial file: {}'.format(file_to_delete))
                 os.remove(file_to_delete)
             except (IOError, OSError) as exc:
-                console.error(exc)
+                error(exc)
 
 
-@CLI.Main(
-    description='Mac volume image reader/writer',
-    add_help=True,
-)
-def main(_args):
-    """Called by cli module at startup."""
+def pause(message: str):
+    """
+    Display a message and wait for user confirmation to continue.
+
+    :param message: message to display before pausing
+    """
+    info(message)
+    response = '?'
+    while response and response not in ('y', 'yes', 'n', 'no'):
+        sys.stdout.write('>>> Continue? (Y|n) ')
+        response = input().strip().lower()
+    if response and response[:1] != 'y':
+        abort('Quit')
+
+
+# noinspection DuplicatedCode
+def cli_backup(input_volume: Optional[str],
+               output_dir: Optional[str],
+               compression: Optional[str],
+               ):
+    """Back up from an input device to a compressed image file."""
+    volume = get_volume(input_volume, 3)
+    volume_summary = volume.short_summary()
+    if not compression:
+        compression = 'gzip'
+    output_path = generate_volume_backup_path(volume, output_dir, compression)
+    info(f'Input device: {volume.raw_disk_dev} ({volume_summary})')
+    info(f' Output path: {output_path}')
+    info(f' Compression: {compression}')
+    pause('Ready to backup volume?')
+    Cleanup.files_to_delete.append(output_path)
+    backup_device(volume.raw_disk_dev, output_path, compression=compression)
+    Cleanup.files_to_delete.pop()
+
+
+def cli_restore(image_path: Optional[str],
+                output_volume: Optional[str],
+                ):
+    """Restore from a gzip-compressed image file to an output device."""
+    if not os.path.isfile(image_path):
+        abort(f'Image path "{image_path}" does not exist.')
+    compression = None
+    if image_path.endswith('.img.gz'):
+        compression = 'gzip'
+    elif image_path.endswith('.img.xz'):
+        compression = 'xz'
+    else:
+        abort(f'Image path "{image_path}" does not have a ".img.<compression>" extension.')
+    volume = get_volume(output_volume, 3)
+    summary = volume.short_summary()
+    info(f'   Input path: {image_path}')
+    info(f'Output device: {volume.raw_disk_dev} ({summary})')
+    info(f'  Compression: {compression}')
+    pause('Ready to restore volume?')
+    restore_device(volume.raw_disk_dev, image_path, compression=compression)
+
+
+def cli_list():
+    """List volumes."""
+    for volume in volumes_list():
+        info('')
+        info(f'Name:            {volume.name}')
+        info(f'Device:          {volume.volume_dev}')
+        info(f'Parent disk:     {volume.disk_dev}')
+        info(f'Parent raw disk: {volume.raw_disk_dev}')
+        info(f'Filesystem:      {volume.filesystem}')
+        info(f'UUID:            {volume.uuid}')
+
+
+# noinspection DuplicatedCode
+def cli_mac(input_volume: Optional[str],
+            output_dir: Optional[str],
+            compression: Optional[str],
+            ):
+    """Enable or disable various kinds of Mac junk files for a volume."""
+    volume = get_volume(input_volume, 1)
+    volume_summary = volume.short_summary()
+    if not compression:
+        compression = 'gzip'
+    output_path = generate_volume_backup_path(volume, output_dir, compression)
+    info(f'Input device: {volume.raw_disk_dev} ({volume_summary})')
+    info(f' Output path: {output_path}')
+    info(f' Compression: {compression}')
+    pause('Ready to backup volume?')
+    Cleanup.files_to_delete.append(output_path)
+    backup_device(volume.raw_disk_dev, output_path, compression=compression)
+    Cleanup.files_to_delete.pop()
+
+
+def cli_main():
+    parser = argparse.ArgumentParser(description='Mac volume image reader/writer.')
+    command_parsers = parser.add_subparsers(dest='COMMAND', help='', title='sub-commands')
+    backup_parser = command_parsers.add_parser('backup',
+                                               description='make a volume image backup')
+    backup_parser.add_argument('-c', '--compression', dest='COMPRESSION', choices=['gzip', 'xz'],
+                               help='compression - "gzip" (default) or "xz"')
+    backup_parser.add_argument(dest='INPUT_VOLUME',
+                               help='volume name, device, UUID, or mountpoint')
+    backup_parser.add_argument(dest='OUTPUT_DIR',
+                               help='output directory for backup image')
+    restore_parser = command_parsers.add_parser('restore',
+                                                description='restore a volume image backup')
+    restore_parser.add_argument(dest='IMAGE_PATH',
+                                help='backup image path')
+    restore_parser.add_argument(dest='OUTPUT_VOLUME',
+                                help='volume name, device, UUID, or mountpoint')
+    _list_parser = command_parsers.add_parser('list',
+                                              description='list volumes')
+    mac_parser = command_parsers.add_parser('mac',
+                                            description='enable/disable Mac features for volume')
+    mac_parser.add_argument(dest='VOLUME',
+                            help='volume name, device, UUID, or mountpoint')
+    args = parser.parse_args()
+    if args.COMMAND == 'backup':
+        cli_backup(args.INPUT_VOLUME,
+                   args.OUTPUT_DIR,
+                   args.COMPRESSION)
+    elif args.COMMAND == 'restore':
+        cli_restore(args.IMAGE_PATH,
+                    args.OUTPUT_VOLUME)
+    elif args.COMMAND == 'list':
+        cli_list()
     atexit.register(at_exit)
 
 
-@CLI.Command(
-    'backup',
-    description='make a volume image backup',
-    arguments=[
-        (['-c', '--compression'],
-         CLI.String('COMPRESSION', 'compression, "gzip" (default) or "xz"',
-                    choices=['gzip', 'xz'])),
-        CLI.String('INPUT_VOLUME', 'volume name, device, UUID, or mountpoint'),
-        CLI.String('OUTPUT_DIR', 'output directory for backup image'),
-    ],
-)
-def cli_backup(args):
-    """Back up from an input device to a compressed image file."""
-    ctx = console.Context()
-    volume = get_volume(args.INPUT_VOLUME, 3)
-    ctx.volume_name = volume.name
-    ctx.raw_disk = volume.raw_disk_dev
-    ctx.volume_summary = volume.short_summary()
-    ctx.compression = args.COMPRESSION or 'gzip'
-    ctx.output_path = generate_volume_backup_path(volume, args.OUTPUT_DIR, ctx.compression)
-    ctx.info('Input device: {raw_disk} ({volume_summary})')
-    ctx.info(' Output path: {output_path}')
-    ctx.info(' Compression: {compression}')
-    ctx.pause('Ready to backup volume?')
-    Cleanup.files_to_delete.append(ctx.output_path)
-    disk.backup_device(ctx.raw_disk, ctx.output_path, compression=ctx.compression)
-    Cleanup.files_to_delete.pop()
-
-
-@CLI.Command(
-    'restore',
-    description='restore a volume image backup',
-    arguments=[
-        CLI.String('IMAGE_PATH', 'backup image path'),
-        CLI.String('OUTPUT_VOLUME', 'volume name, device, UUID, or mountpoint'),
-    ],
-)
-def cli_restore(args):
-    """Restore from a gzip-compressed image file to an output device."""
-    ctx = console.Context()
-    ctx.input_path = args.IMAGE_PATH
-    if not os.path.isfile(ctx.input_path):
-        ctx.abort('Image path "{input_path}" does not exist.')
-    if ctx.input_path.endswith('.img.gz'):
-        ctx.compression = 'gzip'
-    elif ctx.input_path.endswith('.img.xz'):
-        ctx.compression = 'xz'
-    else:
-        ctx.abort('Image path "{input_path}" does not have a ".img.<compression>" extension.')
-    volume = get_volume(args.OUTPUT_VOLUME, 3)
-    ctx.raw_disk = volume.raw_disk_dev
-    ctx.summary = volume.short_summary()
-    ctx.info('   Input path: {input_path}')
-    ctx.info('Output device: {raw_disk} ({summary})')
-    ctx.info('  Compression: {compression}')
-    ctx.pause('Ready to restore volume?')
-    disk.restore_device(ctx.raw_disk, ctx.input_path, compression=ctx.compression)
-
-
-@CLI.Command(
-    'list',
-    description='list volumes',
-)
-def cli_list(_args):
-    """List volumes."""
-    for volume in disk.volumes_list():
-        ctx = console.Context(volume.__dict__)
-        ctx.info(
-            '',
-            'Name:            {name}',
-            'Device:          {volume_dev}',
-            'Parent disk:     {disk_dev}',
-            'Parent raw disk: {raw_disk_dev}',
-            'Filesystem:      {filesystem}',
-            'UUID:            {uuid}',
-        )
-
-
-@CLI.Command(
-    'mac',
-    description='enable/disable Mac features for volume',
-    arguments=[
-        CLI.String('VOLUME', 'volume name, device, UUID, or mountpoint'),
-    ],
-)
-def cli_mac(args):
-    """Enable or disable various kinds of Mac junk files for a volume."""
-    ctx = console.Context()
-    volume = get_volume(args.INPUT_VOLUME, 1)
-    ctx.volume_name = volume.name
-    ctx.raw_disk = volume.raw_disk_dev
-    ctx.volume_summary = volume.short_summary()
-    ctx.compression = args.COMPRESSION or 'gzip'
-    ctx.output_path = generate_volume_backup_path(volume, args.OUTPUT_DIR, ctx.compression)
-    ctx.info('Input device: {raw_disk} ({volume_summary})')
-    ctx.info(' Output path: {output_path}')
-    ctx.info(' Compression: {compression}')
-    ctx.pause('Ready to backup volume?')
-    Cleanup.files_to_delete.append(ctx.output_path)
-    disk.backup_device(ctx.raw_disk, ctx.output_path, compression=ctx.compression)
-    Cleanup.files_to_delete.pop()
+def main():
+    try:
+        cli_main()
+    except KeyboardInterrupt:
+        info('')
+        info('<break>')
+        sys.exit(2)
+    except subprocess.CalledProcessError as exc:
+        abort(str(exc))
+    except (IOError, OSError) as exc:
+        abort(str(exc))
 
 
 if __name__ == '__main__':
-    try:
-        CLI.main()
-    except KeyboardInterrupt:
-        console.info('')
-        console.info('<break>')
-        sys.exit(2)
-    except subprocess.CalledProcessError as exc:
-        console.abort(exc)
-    except (IOError, OSError) as exc:
-        console.abort(exc)
+    main()

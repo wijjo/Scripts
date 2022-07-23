@@ -2,7 +2,7 @@
 # https://www.makeuseof.com/reset-safari-default-mac/
 set -e
 set -x
-mv ~/Library/Safari ~/Desktop/Safari-`date +%Y%m%d%H%M%S`;
+mv ~/Library/Safari ~/Desktop/Safari-$(date +%Y%m%d%H%M%S);
 rm -Rf ~/Library/Cache/*;
 rm -Rf ~/Library/Caches/Apple\ -\ Safari\ -\ Safari\ Extensions\ Gallery;
 rm -Rf ~/Library/Caches/Metadata/Safari;

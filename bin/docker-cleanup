@@ -16,9 +16,9 @@
 # See http://blog.yohanliyanage.com/2015/05/docker-clean-up-after-yourself/
 
 EXITED_CONTAINERS=$(docker ps -a -q -f status=exited)
-test -n "$EXITED_CONTAINERS" && docker rm -v $EXITED_CONTAINERS
+test -n "$EXITED_CONTAINERS" && docker rm -v "$EXITED_CONTAINERS"
 
 DANGLING_IMAGES=$(docker images -f "dangling=true" -q)
-test -n "$DANGLING_IMAGES" && docker rmi $DANGLING_IMAGES
+test -n "$DANGLING_IMAGES" && docker rmi "$DANGLING_IMAGES"
 
 docker run -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/docker:/var/lib/docker --rm martin/docker-cleanup-volumes

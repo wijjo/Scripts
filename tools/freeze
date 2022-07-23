@@ -1,7 +1,7 @@
 #!/bin/bash
 
-_THIS_NAME="$(basename ${BASH_SOURCE[0]})"
-_THIS_DIR="$(dirname ${BASH_SOURCE[0]})"
+_THIS_NAME="$(basename "${BASH_SOURCE[0]}" )"
+_THIS_DIR="$(dirname "${BASH_SOURCE[0]}" )"
 _RUN_DIR="$(pwd)"
 cd "$_THIS_DIR"; _THIS_DIR="$(pwd)"; cd "$_RUN_DIR"
 _THIS_PATH="$_THIS_DIR/$_THIS_NAME"
@@ -36,7 +36,6 @@ EOF
 _DRYRUN=no
 _VERBOSE_OPT=
 _DOCKER_TAG=
-_SCRIPTS=
 while getopts hnvD: opt
 do
     case "$opt" in
@@ -54,18 +53,19 @@ _run() {
     if [ "$_DRYRUN" != "yes" ]; then
         eval "$@"
     else
-        echo "RUN: $@" 1>&2
+        echo "RUN: $*" 1>&2
     fi
 }
 
-shift `expr $OPTIND - 1`
+# shellcheck disable=SC2003
+shift $(expr $OPTIND - 1)
 if [[ $# == 0 ]]; then
     usage
     exit 1
 fi
 
 if [ -n "$_DOCKER_TAG" ]; then
-    _run docker run -it --rm -v /:/freeze -w "/freeze$(pwd)" $_DOCKER_TAG "/freeze$_THIS_PATH" $_VERBOSE_OPT "$@"
+    _run docker run -it --rm -v /:/freeze -w "/freeze$(pwd)" "$_DOCKER_TAG" "/freeze$_THIS_PATH" $_VERBOSE_OPT "$@"
     exit $?
 fi
 
@@ -73,8 +73,8 @@ for _PROG in "$@"; do
     [ -n "$_VERBOSE_OPT" ] && echo "Freezing script: $_PROG"
     _SCRIPTBASE=$PWD/ext/scriptbase
     if [ -e "$_PROG" ]; then
-        _run pushd "$(dirname $_PROG)" > /dev/null
-        _run pyinstaller -p $_SCRIPTBASE -F --specpath $PWD/spec $(basename $_PROG)
+        _run pushd "$(dirname "$_PROG")" > /dev/null
+        _run pyinstaller -p "$_SCRIPTBASE" -F --specpath "$PWD/spec" $(basename "$_PROG")
         _run popd > /dev/null
     else
         echo "ERROR: Script does not exist: $_PROG" 1>&2

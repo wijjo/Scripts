@@ -8,6 +8,7 @@ OUTPUT_DIR = '~/.vscode-extensions-backup'
 LIST_NAME = 'extensions.list'
 SCRIPT_NAME = 'install-extensions.sh'
 
+
 def main(output_dir):
     if not os.path.exists(output_dir):
         try:
@@ -29,9 +30,9 @@ set -e
 set -x
 {lines}
 '''.format(lines=''.join([
-    'code --install-extension {ext}'.format(ext=ext)
-    for ext in f_list
-])))
+                    'code --install-extension {ext}'.format(ext=ext)
+                    for ext in f_list
+                ])))
     except (IOError, OSError) as exc:
         print('* {exc} *'.format(**locals()))
         return 1
@@ -47,11 +48,12 @@ set -x
 '''.format(**locals()))
     return 0
 
+
 if __name__ == '__main__':
     parser = ArgumentParser(
             description='Save VSCode extension list and (re-)installation script.')
     parser.add_argument('-o', '--output-dir', dest='OUTPUT_DIR',
-            default=OUTPUT_DIR,
-            help='output directory (default={output_dir})'.format(output_dir=OUTPUT_DIR))
+                        default=OUTPUT_DIR,
+                        help='output directory (default={output_dir})'.format(output_dir=OUTPUT_DIR))
     args = parser.parse_args()
     sys.exit(main(os.path.expanduser(os.path.expandvars(args.OUTPUT_DIR))))

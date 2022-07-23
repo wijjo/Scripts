@@ -16,7 +16,7 @@
 # Convert a Time Capsule sparsebundle to have large bands for speed.
 
 if [ -z "$1" ]; then
-    echo "Usage $(basename ${BASH_SOURCE[0]}) SPARSEBUNDLE"
+    echo "Usage $(basename "${BASH_SOURCE[0]}" ) SPARSEBUNDLE"
     exit 255
 fi
 echo "Disabling Time Machine..."

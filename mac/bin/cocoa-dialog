@@ -13,21 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# http://coolestguidesontheplanet.com/clear-the-local-dns-cache-in-osx/
+# Run cocoaDialog from inside the app bundle.
 
-IFS=. read V1 V2 V3 <<<"$(sw_vers -productVersion)"
-
-if [ "$V1" = "10" ]; then
-    if [ "$V2" = "4" ]; then
-        lookupd -flushcache
-    elif [ "$V2" = "5" -o "$V2" = "6" ]; then
-        dscacheutil -flushcache
-    elif [ "$V2" = "7" -o "$V2" = "8" ]; then
-        sudo killall -HUP mDNSResponder
-    elif [ "$V2" = "9" ]; then
-        dscacheutil -flushcache
-        sudo killall -HUP mDNSResponder
-    elif [ "$V2" = "10" ]; then
-        sudo discoveryutil udnsflushcaches
+for _APP_DIR in /Applications $HOME/Applications; do
+    _PATH=$_APP_DIR/cocoaDialog.app/Contents/MacOS/cocoaDialog
+    if [ -x "$_PATH" ]; then
+        $_PATH "$@"
+        exit $?
     fi
-fi
+done
+
+echo "CocoaDialog.app not found. http://mstratman.github.io/cocoadialog" 1>&2
+exit 255
