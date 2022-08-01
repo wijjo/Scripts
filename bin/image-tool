@@ -170,7 +170,12 @@ def ios_icons(input_images: Sequence[str],
                                 'iphone-app-3x')
 
 
-def resize_ios_icon(path, basename, pixels, dry_run, *copies):
+def resize_ios_icon(path: str,
+                    basename: str,
+                    pixels: int,
+                    dry_run: bool,
+                    *copies: str,
+                    ):
     """Resize an iOS icon."""
     for copy in copies:
         output = '{basename}-{copy}.png'.format(basename=basename, copy=copy)
@@ -182,6 +187,30 @@ def resize_ios_icon(path, basename, pixels, dry_run, *copies):
         else:
             print(output)
             os.system(resize_command)
+
+
+def favicon(image_path: str,
+            favicon_path: str,
+            dry_run: bool,
+            ):
+    """
+    Create favicon.ico from png file.
+    """
+    favicon_command = (f'convert "{image_path}" -background white'
+                       r' \( -clone 0 -resize 16x16 -extent 16x16 \)'
+                       r' \( -clone 0 -resize 32x32 -extent 32x32 \)'
+                       r' \( -clone 0 -resize 48x48 -extent 48x48 \)'
+                       r' \( -clone 0 -resize 64x64 -extent 64x64 \)'
+                       f' -delete 0 -alpha off -colors 256 {favicon_path}')
+    if dry_run:
+        print(favicon_command)
+    else:
+        if not os.path.exists(image_path):
+            abort(f'Source image path does not exist: {image_path}')
+        if os.path.exists(favicon_path):
+            abort(f'Favicon target path exists: {favicon_path}')
+        print(f'Creating favicon from "{image_path}": {favicon_path}')
+        os.system(favicon_command)
 
 
 def main():
@@ -212,6 +241,14 @@ def main():
                                   help='image file path or wildcard pattern'),
     ios_icons_parser.add_argument('-o', '--output-base', dest='OUTPUT_BASE',
                                   help='custom base name for output files'),
+    favicon_parser = command_parsers.add_parser(
+        'favicon',
+        description='Create favicon from source image.',
+    )
+    favicon_parser.add_argument(dest='INPUT_IMAGE', nargs=1,
+                                help='source image file path')
+    favicon_parser.add_argument(dest='OUTPUT_PATH', nargs=1,
+                                help='favicon output path')
     args = parser.parse_args()
     if args.COMMAND == 'chop':
         chop(args.INPUT_IMAGE,
@@ -225,6 +262,10 @@ def main():
         ios_icons(args.INPUT_IMAGE,
                   args.OUTPUT_BASE,
                   args.DRY_RUN)
+    elif args.COMMAND == 'favicon':
+        favicon(args.INPUT_IMAGE[0],
+                args.OUTPUT_PATH[0],
+                args.DRY_RUN)
 
 
 if __name__ == '__main__':
