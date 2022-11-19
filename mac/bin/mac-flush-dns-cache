@@ -12,24 +12,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-# http://coolestguidesontheplanet.com/clear-the-local-dns-cache-in-osx/
-
-# shellcheck disable=SC2162
-IFS=. read V1 V2 V3 <<<"$(sw_vers -productVersion)"
-
-  # shellcheck disable=SC2166
-if [ "$V1" = "10" ]; then
-    if [ "$V2" = "4" ]; then
-        lookupd -flushcache
-    elif [ "$V2" = "5" -o "$V2" = "6" ]; then
-        dscacheutil -flushcache
-    elif [ "$V2" = "7" -o "$V2" = "8" ]; then
-        sudo killall -HUP mDNSResponder
-    elif [ "$V2" = "9" ]; then
-        dscacheutil -flushcache
-        sudo killall -HUP mDNSResponder
-    elif [ "$V2" = "10" ]; then
-        sudo discoveryutil udnsflushcaches
-    fi
+set -e
+set -x
+# This check allows it to work pre-Catalina, in addtion to versions through
+# Ventura (and beyond?).
+if { command -v dscacheutil > /dev/null; }; then
+    sudo dscacheutil -flushcache
 fi
+sudo killall -HUP mDNSResponder
