@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+
+"""Trim Amazon URLs for sharing."""
+
+import argparse
+from typing import Iterable
+from urllib.parse import (
+    parse_qsl,
+    urlencode,
+    urlparse,
+    urlunparse,
+)
+
+TRIMMED_QUERY_KEYS = ['qid', 'dc', 'ds', 'crid', 'rnid', 'ref', 'sprefix']
+
+
+def rebuild_url(url: str, trim_query_keys: Iterable[str] = None) -> str:
+    if not trim_query_keys:
+        return url
+    parse_result = urlparse(url)
+    if trim_query_keys:
+        query_pairs = parse_qsl(parse_result.query)
+        trimmed_query_dict = {
+            key: value
+            for key, value in query_pairs
+            if key not in TRIMMED_QUERY_KEYS
+        }
+        rebuilt_query = urlencode(trimmed_query_dict)
+    else:
+        rebuilt_query = parse_result.query
+    rebuilt_url = urlunparse((
+        parse_result.scheme,
+        parse_result.netloc,
+        parse_result.path,
+        parse_result.params,
+        rebuilt_query,
+        parse_result.fragment,
+    ))
+    return rebuilt_url
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Amazon shared URL trimmer.')
+    parser.add_argument(dest='URL', nargs='+', help='URL(s) to trim')
+    args = parser.parse_args()
+
+    for url in args.URL:
+        rebuilt_url = rebuild_url(url, trim_query_keys=TRIMMED_QUERY_KEYS)
+        print(rebuilt_url)
+
+
+if __name__ == '__main__':
+    main()

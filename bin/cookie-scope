@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+
+# Adapted from https://github.com/ktnjared/BinaryCookieReader.git
+
+import argparse
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from struct import unpack
+from io import BytesIO
+from time import strftime, gmtime
+from typing import Iterable
+
+BROWSER_COOKIE_PATHS = {
+    'safari': Path.home() / 'Library' / 'Cookies' / 'Cookies.binarycookies',
+}
+
+EMAIL_PATTERN = re.compile(r'^(\w+)@([\w.]+)$')
+
+
+def abort(message):
+    sys.stderr.write(f'ERROR: {message}\n')
+    sys.exit(1)
+
+
+@dataclass
+class Cookie:
+    domain: str
+    name: str
+    value: str
+    path: str
+    expires: str
+    flags: str
+
+
+def main():
+    arg_parser = argparse.ArgumentParser(
+        description='Cookie searcher/dumper.',
+        epilog='''
+Multiple filter options may be used.
+ 
+Each filter option type may be used more than once.
+
+Filter values are matched to entire or partial cookie field values.
+
+Filter values that look like email addresses, e.g. me@example.com, have special
+handling that can match on the way such addresses are tweaked to save as cookie
+data, e.g. "me%40example.com".
+'''.strip(),
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    arg_parser.add_argument(dest='COOKIE_SOURCE',
+                            help='Cookies path or known browser name.')
+    arg_parser.add_argument('-d', '--domain', dest='DOMAIN', action='append',
+                            help='Cookie domain filter')
+    arg_parser.add_argument('-p', '--path', dest='PATH', action='append',
+                            help='Cookie path filter')
+    arg_parser.add_argument('-v', '--value', dest='VALUE', action='append',
+                            help='Cookie value filter')
+    args = arg_parser.parse_args()
+    path = get_cookies_path(args.COOKIE_SOURCE)
+    cookies = get_cookies(path)
+    query_cookies(cookies, domains=args.DOMAIN, paths=args.PATH, values=args.VALUE)
+
+
+def get_cookies_path(path_or_browser: str) -> Path:
+    if path_or_browser in BROWSER_COOKIE_PATHS:
+        return BROWSER_COOKIE_PATHS[path_or_browser]
+    path = Path(path_or_browser)
+    if path.is_file():
+        return path
+    abort(f'Cookie source is neither a supported browser nor a cookie file path: {path_or_browser}')
+
+
+def get_cookies(path: Path) -> list[Cookie]:
+    if not path.is_file():
+        abort(f'File not found: {path}\n')
+
+    cookies: list[Cookie] = []
+
+    with path.open('rb') as binary_file:
+
+        magic_header = binary_file.read(4).decode('ascii')  # File Magic String:cook
+
+        if magic_header != 'cook':
+            abort('Incorrect file header.')
+
+        # Number of pages in the binary file: 4 bytes
+        num_pages = unpack('>i', binary_file.read(4))[0]
+
+        page_sizes = []
+        for np in range(num_pages):
+            # Each page size: 4 bytes*number of pages
+            page_sizes.append(unpack('>i', binary_file.read(4))[0])
+
+        pages = []
+        for ps in page_sizes:
+            # Grab individual pages and each page will contain >= one cookie
+            pages.append(binary_file.read(ps))
+
+        for page in pages:
+            # Converts the string to a file. So that we can use read/write operations easily.
+            page = BytesIO(page)
+            page.read(4)  # page header: 4 bytes: Always 00000100
+            # Number of cookies in each page, first 4 bytes after the page header in every page.
+            num_cookies = unpack('<i', page.read(4))[0]
+
+            cookie_offsets = []
+            for nc in range(num_cookies):
+                # Every page contains >= one cookie. Fetch cookie starting point from page starting byte
+                cookie_offsets.append(unpack('<i', page.read(4))[0])
+
+            page.read(4)  # end of page header: Always 00000000
+
+            for offset in cookie_offsets:
+                page.seek(offset)  # Move the page pointer to the cookie starting point
+                cookie_size = unpack('<i', page.read(4))[0]  # fetch cookie size
+                cookie = BytesIO(page.read(cookie_size))  # read the complete cookie
+
+                cookie.read(4)  # unknown
+
+                # Cookie flags:  1=secure, 4=httponly, 5=secure+httponly
+                flags = unpack('<i', cookie.read(4))[0]
+                if flags == 0:
+                    cookie_flags = ''
+                elif flags == 1:
+                    cookie_flags = 'Secure'
+                elif flags == 4:
+                    cookie_flags = 'HttpOnly'
+                elif flags == 5:
+                    cookie_flags = 'Secure; HttpOnly'
+                else:
+                    cookie_flags = 'Unknown'
+
+                cookie.read(4)  # unknown
+
+                # cookie domain offset from cookie starting point
+                url_offset = unpack('<i', cookie.read(4))[0]
+
+                # cookie name offset from cookie starting point
+                name_offset = unpack('<i', cookie.read(4))[0]
+
+                # cookie path offset from cookie starting point
+                path_offset = unpack('<i', cookie.read(4))[0]
+
+                # cookie value offset from cookie starting point
+                value_offset = unpack('<i', cookie.read(4))[0]
+
+                _end_of_cookie = cookie.read(8)  # end of cookie
+
+                # Expiry date is in Mac epoch format: Starts from 1/Jan/2001
+                expiry_date_epoch = unpack('<d', cookie.read(8))[0] + 978307200
+
+                # 978307200 is unix epoch of  1/Jan/2001 //[:-1] strips the last space
+                expiry_date = strftime("%a, %d %b %Y ", gmtime(expiry_date_epoch))[:-1]
+
+                # Cookies creation time
+                # create_date_epoch = unpack('<d', cookie.read(8))[0]+978307200
+                # create_date = strftime("%a, %d %b %Y ", gmtime(create_date_epoch))[:-1]
+                # print create_date
+
+                # noinspection DuplicatedCode
+                cookie.seek(url_offset - 4)  # fetch domain value from url offset
+                url = ''
+                u = cookie.read(1)
+                while unpack('<b', u)[0] != 0:
+                    url += u.decode('utf-8')
+                    u = cookie.read(1)
+
+                cookie.seek(name_offset - 4)  # fetch cookie name from name offset
+                name = ''
+                n = cookie.read(1)
+                while unpack('<b', n)[0] != 0:
+                    name += n.decode('utf-8')
+                    n = cookie.read(1)
+
+                # noinspection DuplicatedCode
+                cookie.seek(path_offset - 4)  # fetch cookie path from path offset
+                path = ''
+                pa = cookie.read(1)
+                while unpack('<b', pa)[0] != 0:
+                    path += pa.decode('utf-8')
+                    pa = cookie.read(1)
+
+                cookie.seek(value_offset - 4)  # fetch cookie value from value offset
+                value = ''
+                va = cookie.read(1)
+                while unpack('<b', va)[0] != 0:
+                    value += va.decode('utf-8')
+                    va = cookie.read(1)
+
+                cookies.append(
+                    Cookie(
+                        domain=url,
+                        name=name,
+                        value=value,
+                        path=path,
+                        expires=expiry_date,
+                        flags=cookie_flags,
+                    )
+                )
+
+    return sorted(cookies, key=lambda c: c.domain)
+
+
+def query_cookies(
+        cookies: list[Cookie],
+        domains: Iterable[str] | None,
+        paths: Iterable[str] | None,
+        values: Iterable[str] | None,
+):
+    if domains is None:
+        domains = []
+    if paths is None:
+        paths = []
+    if values is None:
+        values = []
+    else:
+        extended_values = list(values)
+        for value in values:
+            value_match = EMAIL_PATTERN.match(value)
+            if value_match is not None:
+                extended_values.append(f'{value_match.group(1)}%40{value_match.group(2)}')
+        values = extended_values
+    for cookie in cookies:
+        if domains:
+            for domain in domains:
+                if cookie.domain.find(domain) != -1:
+                    break
+            else:
+                continue
+        if paths:
+            for path in paths:
+                if cookie.path.find(path) != -1:
+                    break
+            else:
+                continue
+        if values:
+            for value in values:
+                if cookie.value.find(value) != -1:
+                    break
+            else:
+                continue
+        print('')
+        print(f'--- {cookie.domain}')
+        print(f'name={cookie.name}')
+        print(f'value={cookie.value}')
+        print(f'path={cookie.path}')
+        print(f'expires={cookie.expires}')
+        print(f'flags={cookie.flags}')
+
+
+if __name__ == '__main__':
+    main()
