@@ -1,0 +1,320 @@
+#!/usr/bin/env python3
+
+"""
+Cookie scope.
+
+See command line help text for more information.
+
+See LICENSE.md for license information.
+
+Adapted original code from:
+https://github.com/ktnjared/BinaryCookieReader.git
+"""
+
+import argparse
+import sys
+from pathlib import Path
+from struct import unpack
+from io import BytesIO
+from time import strftime, gmtime
+from typing import AnyStr, IO, Iterable, Self
+from urllib.parse import quote
+
+#: Well-known cookie file paths for named browsers. Needs expansion.
+BROWSER_COOKIE_PATHS: dict[str, list[str]] = {
+    'safari': [
+        '~/Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies',
+        '~/Library/Cookies/Cookies.binarycookies',
+    ],
+}
+
+
+def abort(message):
+    """
+    Display error message and quit.
+
+    Args:
+        message: error message
+    """
+    sys.stderr.write(f'ERROR: {message}\n')
+    sys.exit(1)
+
+
+def main():
+    """
+    Main function.
+    """
+    arg_parser = argparse.ArgumentParser(
+        description='Cookie query tool.',
+        epilog='''
+Filter values are HTTP-escaped before comparing to cookie attributes.
+
+Filters match full or partial cookie fields.
+ 
+Frequently-used attribute names are:
+  * value - the primary cookie data field
+  * name - the name assigned to the cookie value
+  * domain - the site domain that created the cookie
+  * path - a string representing a web site location 
+'''.strip(),
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    arg_parser.add_argument(dest='COOKIE_SOURCE',
+                            help='cookies path or known browser name')
+    arg_parser.add_argument(dest='FILTER', nargs='*',
+                            help='name=value expression for filtering on cookie fields')
+    args = arg_parser.parse_args()
+    path = get_cookies_path(args.COOKIE_SOURCE)
+    cookies = get_cookies(path)
+    filters = get_filters(args.FILTER)
+    query_cookies(cookies, filters)
+
+
+def get_cookies_path(path_or_browser: str) -> Path:
+    """
+    Provide cookie file path based on actual path or browser name.
+
+    Args:
+        path_or_browser: file path or browser name
+
+    Returns:
+        cookie file path
+    """
+    if path_or_browser in BROWSER_COOKIE_PATHS:
+        for path_string in BROWSER_COOKIE_PATHS[path_or_browser]:
+            path = Path(path_string).expanduser()
+            if path.is_file():
+                return path
+        abort(f'Cookie file not found for browser: {path_or_browser}')
+    path = Path(path_or_browser)
+    if path.is_file():
+        return path
+    abort(f'Cookie source not found: {path_or_browser}')
+
+
+def get_filters(name_value_pairs: Iterable[str]) -> dict[str, list[str]]:
+    """
+    Convert name=value raw filter expressions to filter dictionary.
+
+    Values strings are HTTP-escaped.
+
+    Args:
+        name_value_pairs: name=value filter expressions
+
+    Returns:
+        dictionary mapping attribute names to lists of partial values
+    """
+    filters: dict[str, list[str]] = {}
+    for name_value_pair in name_value_pairs:
+        name_value_fields = name_value_pair.split('=', maxsplit=1)
+        if len(name_value_fields) != 2 or not name_value_fields[1]:
+            abort(f'Bad name=value filter expression: {name_value_pair}')
+        name, value = name_value_fields
+        filters.setdefault(name, []).append(quote(value))
+    return filters
+
+
+def get_cookies(file_path: Path) -> list[dict[str, str]]:
+    """
+    Read binary cookie file and convert to list of cookies as dictionaries.
+
+    Args:
+        file_path: binary cookie file path
+
+    Returns:
+        list of cookie dictionaries sorted by domain
+    """
+    if not file_path.is_file():
+        abort(f'File not found: {file_path}\n')
+    cookies: list[dict[str, str]] = []
+    with file_path.open('rb') as binary_file:
+        extractor = CookieDataExtractor(binary_file)
+        extractor.get_string(4, encoding='ascii', expect='cook')
+        num_pages = extractor.get_header_integer()
+        page_sizes = [extractor.get_header_integer() for _idx in range(num_pages)]
+        page_blocks = [extractor.get_block(length) for length in page_sizes]
+        for page_block in page_blocks:
+            page_block.get_bytes(4, expect=bytes([0, 0, 1, 0]))
+            num_cookies = page_block.get_integer()
+            cookie_offsets = [page_block.get_integer() for _idx in range(num_cookies)]
+            page_block.get_bytes(4, expect=bytes([0, 0, 0, 0]))
+            for offset in cookie_offsets:
+                cookie = {}
+                page_block.set_offset(offset)
+                cookie_size = page_block.get_integer()
+                cookie_block = page_block.get_block(cookie_size)
+                cookie_block.get_bytes(4)   # unknown
+                cookie['flags'] = cookie_block.get_flags()
+                cookie_block.get_bytes(4)   # unknown
+                url_offset = cookie_block.get_integer()
+                name_offset = cookie_block.get_integer()
+                path_offset = cookie_block.get_integer()
+                value_offset = cookie_block.get_integer()
+                cookie_block.get_bytes(8)   # end of cookie
+                cookie['expires'] = cookie_block.get_date_time()
+                cookie['created'] = cookie_block.get_date_time()
+                cookie_block.set_offset(url_offset - 4)
+                cookie['domain'] = cookie_block.get_attribute()
+                cookie_block.set_offset(name_offset - 4)
+                cookie['name'] = cookie_block.get_attribute()
+                cookie_block.set_offset(path_offset - 4)
+                cookie['path'] = cookie_block.get_attribute()
+                cookie_block.set_offset(value_offset - 4)
+                cookie['value'] = cookie_block.get_attribute()
+                cookies.append(cookie)
+    return sorted(cookies, key=lambda c: c.get('domain'))
+
+
+class CookieDataExtractor:
+    """Binary cookies file reader and data extractor/decoder."""
+
+    def __init__(self, stream: IO):
+        """
+        Cookie data extractor constructor.
+
+        Args:
+            stream: binary data stream
+        """
+        self._stream = stream
+
+    def get_bytes(self, length: int, expect: bytes = None) -> AnyStr:
+        """
+        Extract bytes, with optional fixed value check.
+
+        Args:
+            length: number of bytes to read
+            expect: optional expected bytes
+        """
+        value = self._stream.read(length)
+        if expect is not None and value != expect:
+            abort(f'Expected bytes "{expect}", found "{value}".')
+        return value
+
+    def get_string(self, length: int, encoding: str = 'utf-8', expect: str = None) -> str:
+        """
+        Extract string, with optional fixed value check.
+
+        Args:
+            length: number of characters
+            encoding: optional encoding (default: utf-8)
+            expect: optional expected fixed value
+
+        Returns:
+            extracted string
+        """
+        raw_value = self.get_bytes(length)
+        value = raw_value.decode(encoding)
+        if expect is not None and value != expect:
+            abort(f'Expected string "{expect}", found "{value}".')
+        return value
+
+    def get_header_integer(self) -> int:
+        """
+        Extract integer from file header, which is big-endian format.
+
+        Returns:
+            offset value
+        """
+        return unpack('>i', self.get_bytes(4))[0]
+
+    def get_integer(self) -> int:
+        """
+        Extract integer from body (little-endian).
+
+        Returns:
+            offset value
+        """
+        return unpack('<i', self.get_bytes(4))[0]
+
+    def get_flags(self) -> str:
+        """
+        Extract cookie flags from binary stream.
+
+        Returns:
+            flag string
+        """
+        flags = self.get_integer()
+        if flags == 0:
+            return ''
+        if flags == 1:
+            return 'Secure'
+        if flags == 4:
+            return 'HttpOnly'
+        if flags == 5:
+            return 'Secure; HttpOnly'
+        return 'Unknown'
+
+    def get_attribute(self) -> str:
+        """
+        Extract attribute string from binary stream.
+
+        Returns:
+            attribute value string
+        """
+        value = ''
+        byte = self.get_bytes(1)
+        while unpack('<b', byte)[0] != 0:
+            value += byte.decode('utf-8')
+            byte = self.get_bytes(1)
+        return value
+
+    def get_date_time(self) -> str:
+        """
+        Extract date/time string.
+
+        Returns:
+            date/time string
+        """
+        # Expiry date is in Mac epoch format: Starts from 1/Jan/2001
+        expiry_date_epoch = unpack('<d', self.get_bytes(8))[0] + 978307200
+        # 978307200 is unix epoch of  1/Jan/2001 //[:-1] strips the last space
+        return strftime("%a, %d %b %Y ", gmtime(expiry_date_epoch))[:-1]
+
+    def get_block(self, length) -> Self:
+        """
+        Get extractor for block of data
+
+        Args:
+            length: number of bytes to wrap
+
+        Returns:
+            block data extractor
+        """
+        return self.__class__(BytesIO(self.get_bytes(length)))
+
+    def set_offset(self, offset: int):
+        """
+        Seek to offset provided.
+
+        Args:
+            offset: offset to seek to
+        """
+        self._stream.seek(offset)
+
+
+def query_cookies(cookies: list[dict[str, str]], filters: dict[str, list[str]]):
+    """
+    Display matching cookies after applying filters.
+
+    Args:
+        cookies: cookies as attribute dictionaries
+        filters: filters as a mapping of attribute names to filtered values
+    """
+    for cookie in cookies:
+        for name, values in filters.items():
+            if name not in cookie:
+                break
+            for value in values:
+                if cookie[name].find(value) == -1:
+                    break
+            else:
+                continue
+            break
+        else:
+            print('')
+            for name in sorted(cookie.keys()):
+                print(f'{name}={cookie[name]}')
+
+
+if __name__ == '__main__':
+    main()
